@@ -79,6 +79,33 @@ def test_quarantine_lands_under_the_plan_token_on_the_same_volume(tmp_path: Path
 
 
 @POSIX_ONLY
+def test_a_single_file_quarantine_round_trips(tmp_path: Path) -> None:
+    result = gen_executor.scenario(tmp_path)
+    payload = result.root / "cache" / "blob.bin"
+    size = 256 * gen_executor.KIB
+    plan = gen_executor.plan_dict(
+        [gen_executor.action("a1", "DELETE_QUARANTINE", payload, size, tier="T1", kind="delete")]
+    )
+    report = executor.apply_plan(
+        plan,
+        executor.make_manifest(str(plan["plan_id"]), ["a1"]),
+        execute=True,
+        journal=result.journal_path,
+        quarantine_root=result.quarantine,
+    )
+    assert report.ok(), report.to_dict()
+    step = step_of(report, "quarantine")
+    assert step.outcome == "done" and step.verify == "verified"
+    assert step.dest is not None and Path(step.dest).is_file()
+    assert not payload.exists()
+
+    undone = executor.undo_journal(result.journal_path)
+    assert undone.ok(), undone.to_dict()
+    assert payload.is_file()
+    assert payload.read_bytes() == gen_executor.content("blob.bin", size)
+
+
+@POSIX_ONLY
 def test_quarantine_writes_an_audit_manifest_per_payload(tmp_path: Path) -> None:
     result = gen_executor.scenario(tmp_path)
     apply_all(result, "a1")

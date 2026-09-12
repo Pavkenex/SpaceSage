@@ -251,7 +251,7 @@ class JournalWriter:
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self.path = Path(path)
-        existing = read_journal(self.path) if self.path.exists() else None
+        existing = read_journal(self.path) if self.path.is_file() else None
         self._next_run = existing.next_run() if existing is not None else 1
         self._next_seq = existing.next_seq() if existing is not None else 1
 
@@ -466,11 +466,16 @@ class JournalWriter:
         payload = dict(record)
         payload["schema"] = JOURNAL_SCHEMA
         line = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError as exc:
+            # An operation that cannot be journaled cannot be undone: refuse the
+            # run instead of doing something nobody can take back.
+            raise ExecutorError(f"cannot write the journal at {self.path}: {exc}") from None
 
 
 # --------------------------------------------------------------------------- #

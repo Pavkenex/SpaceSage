@@ -597,6 +597,22 @@ def test_dry_run_with_an_explicit_journal_records_a_run(tmp_path: Path) -> None:
     assert not result.quarantine.exists()
 
 
+def test_a_journal_that_cannot_be_written_refuses_the_run(tmp_path: Path) -> None:
+    result = gen_executor.scenario(tmp_path)
+    blocked = tmp_path / "not-a-file"
+    blocked.mkdir()
+    before = gen_executor.snapshot(result.root)
+    with pytest.raises(executor.ExecutorError, match="cannot write the journal"):
+        executor.apply_plan(
+            result.plan,
+            result.manifest("a1"),
+            execute=True,
+            journal=blocked,
+            quarantine_root=result.quarantine,
+        )
+    assert gen_executor.snapshot(result.root) == before
+
+
 def test_relative_roots_resolve_against_the_working_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
