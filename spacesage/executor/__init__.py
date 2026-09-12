@@ -532,7 +532,10 @@ class _Runner:
                 dest=resolved.dest,
                 link=resolved.link,
                 bytes=action.bytes,
+                verify="skipped",
             )
+            if self.execute:
+                self._journal_stop(resolved, step=step)
             return self._result(action, "refused", reason, (step,))
         allowed, why = self._platform_allows(resolved)
         if not allowed:
@@ -544,7 +547,10 @@ class _Runner:
                 dest=resolved.dest,
                 link=resolved.link,
                 bytes=action.bytes,
+                verify="skipped",
             )
+            if self.execute:
+                self._journal_stop(resolved, step=step)
             return self._result(action, "skipped", why, (step,))
         steps = self._execute(resolved) if self.execute else self._plan(resolved)
         outcome = worst_outcome([step.outcome for step in steps])
@@ -844,16 +850,43 @@ class _Runner:
         return self._stop(resolved, outcome="failed", reason=reason)
 
     def _stop(self, resolved: _Resolved, *, outcome: str, reason: str) -> Step:
-        action = resolved.action
-        return Step(
+        """A decision not to act: reported and (when executing) journaled too.
+
+        Skips and refusals never touch the filesystem, so a single finished
+        record is enough -- but they are recorded: "no silent partial success"
+        means a reader can tell an approved action was deliberately left alone.
+        """
+        step = Step(
             op=resolved.op,
             outcome=outcome,
             reason=reason,
-            src=action.path,
+            src=resolved.action.path,
             dest=resolved.dest,
             link=resolved.link,
-            bytes=action.bytes,
+            bytes=resolved.action.bytes,
             verify="skipped",
+        )
+        self._journal_stop(resolved, step=step)
+        return step
+
+    def _journal_stop(self, resolved: _Resolved, *, step: Step) -> None:
+        """Record a step that was decided without touching anything."""
+        seq = self._start_op(resolved, op=step.op, reason=step.reason)
+        if seq is None or self.writer is None:
+            return
+        self.writer.finish_op(
+            run=self.run_number,
+            seq=seq,
+            action_id=resolved.action.id,
+            action_type=resolved.action.type,
+            op=step.op,
+            outcome=step.outcome,
+            reason=step.reason,
+            bytes_=step.bytes,
+            src=step.src,
+            dest=step.dest,
+            link=step.link,
+            verify=step.verify,
         )
 
     def _finish_move(
@@ -904,7 +937,7 @@ class _Runner:
     def _start_op(
         self, resolved: _Resolved, *, op: str, reason: str, before: TreeDigest | None = None
     ) -> int | None:
-        if self.writer is None:
+        if self.writer is None or not self.execute:
             return None
         return self.writer.start_op(
             run=self.run_number,

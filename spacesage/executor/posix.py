@@ -113,9 +113,20 @@ class PosixBackend:
         return PrimResult(ok=True, detail=f"symlink created -> {target}", note=note)
 
     def remove_link(self, path: str) -> PrimResult:
-        """Remove a symlink (never its target); hard links are plain files here."""
-        if os.path.lexists(path) and backend.reparse_kind(path) is None:
+        """Remove the link at ``path``: a symlink, or one name of a hard-linked file."""
+        if not os.path.lexists(path):
             return PrimResult(ok=False, detail="there is no link at that path")
+        if backend.reparse_kind(path) is None:
+            names = _names_of(path)
+            if names < 2:
+                return PrimResult(ok=False, detail="the path is a plain file, not a link")
+            try:
+                os.unlink(path)
+            except OSError as exc:
+                return PrimResult(ok=False, detail=f"cannot remove the hard link: {exc}")
+            return PrimResult(
+                ok=True, detail="removed one hard link (the payload stays at its other name)"
+            )
         try:
             os.unlink(path)
         except OSError as exc:
@@ -175,6 +186,14 @@ def mount_point(path: str) -> str:
 def _uid() -> int:
     getuid = getattr(os, "getuid", None)
     return int(getuid()) if getuid is not None else 0
+
+
+def _names_of(path: str) -> int:
+    """How many directory entries share this payload (``st_nlink``, 1 for plain)."""
+    try:
+        return os.stat(path).st_nlink
+    except OSError:
+        return 1
 
 
 def _flock_probe(handle: int) -> tuple[bool, str]:

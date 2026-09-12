@@ -560,12 +560,12 @@ def _op(seq: int, record: Mapping[str, object]) -> JournalOp:
         type=_optional_text(record, "type", where=where) or "",
         op=_text(record, "op", where=where),
         outcome=_text(record, "outcome", where=where),
-        reason=_optional_text(record, "reason", where=where) or "",
+        reason=_maybe_blank(record, "reason", where=where),
         bytes=_int(record, "bytes", where=where),
         src=_text(record, "src", where=where),
         dest=_optional_text(record, "dest", where=where),
         link=_optional_text(record, "link", where=where),
-        verify=_optional_text(record, "verify", where=where) or "",
+        verify=_maybe_blank(record, "verify", where=where),
         notes=_texts(record, "notes", where=where),
         before=_digest(record, "before", where=where),
         after=_digest(record, "after", where=where),
@@ -583,10 +583,10 @@ def _undo(seq: int, record: Mapping[str, object]) -> JournalUndo:
         action_id=_text(record, "action_id", where=where),
         op=_text(record, "op", where=where),
         outcome=_text(record, "outcome", where=where),
-        reason=_optional_text(record, "reason", where=where) or "",
+        reason=_maybe_blank(record, "reason", where=where),
         src=_text(record, "src", where=where),
         dest=_optional_text(record, "dest", where=where),
-        verify=_optional_text(record, "verify", where=where) or "",
+        verify=_maybe_blank(record, "verify", where=where),
         notes=_texts(record, "notes", where=where),
         finished=bool(record.get("finished", True)),
     )
@@ -605,6 +605,16 @@ def _optional_text(record: Mapping[str, object], key: str, *, where: str) -> str
         return None
     if not isinstance(value, str) or not value:
         raise ExecutorError(f"{where}: {key!r} must be a non-empty string or null (got {value!r})")
+    return value
+
+
+def _maybe_blank(record: Mapping[str, object], key: str, *, where: str) -> str:
+    """A string field that may be empty (``verify`` starts empty, ``reason`` may be)."""
+    value = record.get(key)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ExecutorError(f"{where}: {key!r} must be a string (got {value!r})")
     return value
 
 
@@ -709,6 +719,8 @@ def _reverse(
     outcome, detail, verify_state, notes, before, after = _perform_reversal(
         op, inverse, backend=backend, content_limit=content_limit
     )
+    if not op.finished:
+        detail = f"settled an interrupted {op.op}: {detail}"
     writer.finish_undo(
         run=run,
         seq=seq,
@@ -830,26 +842,31 @@ def _reverse_link(
     op: JournalOp, *, backend: Backend
 ) -> tuple[str, str, str, tuple[str, ...], TreeDigest | None, TreeDigest | None]:
     """Remove the link the move left behind (the target's contents stay)."""
-    if reparse_kind(op.src) is None:
-        if os.path.lexists(op.src):
-            return (
-                "skipped",
-                f"{op.src} is no longer a link; left untouched",
-                "skipped",
-                (),
-                None,
-                None,
-            )
-        return "skipped", f"the link at {op.src} is already gone", "skipped", (), None, None
-    primitive = backend.remove_link(op.src)
-    state = (
-        "skipped"
-        if not primitive.ok
-        else ("verified" if reparse_kind(op.src) is None else "mismatch")
-    )
+    path = op.src
+    if not os.path.lexists(path):
+        return "skipped", f"the link at {path} is already gone", "skipped", (), None, None
+    if reparse_kind(path) is None and not _shares_its_payload(path):
+        return (
+            "skipped",
+            f"{path} is no longer a link; left untouched",
+            "skipped",
+            (),
+            None,
+            None,
+        )
+    primitive = backend.remove_link(path)
     if not primitive.ok:
-        return "failed", primitive.detail, state, (), None, None
-    return "done", primitive.detail, state, (), None, None
+        return "failed", primitive.detail, "skipped", (), None, None
+    gone = reparse_kind(path) is None and not _shares_its_payload(path)
+    return "done", primitive.detail, "verified" if gone else "mismatch", (), None, None
+
+
+def _shares_its_payload(path: str) -> bool:
+    """True when another directory entry points at the same payload (hard link)."""
+    try:
+        return os.stat(path).st_nlink > 1
+    except OSError:
+        return False
 
 
 def _reverse_compress(

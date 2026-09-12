@@ -74,7 +74,7 @@ def verify_label(state: str) -> str:
 def worst_outcome(outcomes: Sequence[str]) -> str:
     """The most severe outcome of a sequence (``failed`` > ``refused`` > ...)."""
     ranked = {name: index for index, name in enumerate(APPLY_OUTCOMES)}
-    return min(outcomes, key=lambda name: ranked.get(name, 0), default="skipped")
+    return max(outcomes, key=lambda name: ranked.get(name, 0), default="skipped")
 
 
 @dataclass(frozen=True)

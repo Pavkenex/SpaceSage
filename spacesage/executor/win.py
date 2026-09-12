@@ -64,7 +64,9 @@ class WinBackend:
         return False, f"unknown link kind {kind}"
 
     def can_compress(self) -> tuple[bool, str]:
-        """``compact.exe`` is part of every Windows install."""
+        """``compact.exe`` is part of every Windows install -- and only exists there."""
+        if os.name != "nt":  # pragma: no cover - the win CI job covers it
+            return False, "the Windows backend is not running on Windows"
         return True, "NTFS compression via compact.exe"
 
     def is_locked(self, path: str) -> tuple[bool, str]:
@@ -232,10 +234,24 @@ class WinBackend:
         )
 
     def remove_link(self, path: str) -> PrimResult:
-        """Remove a junction/symlink itself (never the directory it points at)."""
+        """Remove a junction/symlink itself, or one name of a hard-linked file."""
         kind = backend.reparse_kind(longpath(path))
         if kind is None:
-            return PrimResult(ok=False, detail="there is no link at that path")
+            if not os.path.lexists(path):
+                return PrimResult(ok=False, detail="there is no link at that path")
+            try:
+                links = os.stat(longpath(path)).st_nlink
+            except OSError as exc:
+                return PrimResult(ok=False, detail=f"cannot inspect the path: {exc}")
+            if links < 2:
+                return PrimResult(ok=False, detail="the path is a plain file, not a link")
+            try:
+                os.unlink(longpath(path))
+            except OSError as exc:
+                return PrimResult(ok=False, detail=f"cannot remove the hard link: {exc}")
+            return PrimResult(
+                ok=True, detail="removed one hard link (the payload stays at its other name)"
+            )
         try:
             if os.path.isdir(path):
                 # RemoveDirectory on a junction/symlink-to-directory drops the

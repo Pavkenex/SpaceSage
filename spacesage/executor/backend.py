@@ -311,9 +311,10 @@ def volume_label(path: str) -> str:
     if not is_windows_path(path):
         return "root"
     drive = ntpath.splitdrive(path)[0].replace("/", "\\")
+    if len(drive) == 2 and drive.endswith(":"):
+        return drive[0].upper()
     parts = [part for part in drive.replace("\\", "/").split("/") if part]
-    label = "_".join(parts) or "root"
-    return label.replace(":", "_")
+    return "_".join(parts).replace(":", "_") or "root"
 
 
 def quarantine_relative(path: str) -> tuple[str, ...]:
@@ -341,6 +342,10 @@ def join_path(base: str, *parts: str) -> str:
     """Join in the style of ``base`` (so POSIX tests can drive Windows-shaped plans)."""
     if is_windows_path(base):
         result = base.rstrip("\\/")
+        if result.endswith(":"):
+            # A drive root must stay a root, or ntpath.join would turn
+            # "D:\\" into the drive-relative "D:x".
+            result += "\\"
         for part in parts:
             result = ntpath.join(result, part)
         return result
@@ -380,6 +385,9 @@ def protected_reason(path: str) -> str | None:
     if any(char in path for char in "*?"):
         return "wildcards are not allowed (absolute paths only)"
     if is_windows_path(path):
+        _, rest = ntpath.splitdrive(path)
+        if rest and not rest.replace("/", "\\").startswith("\\"):
+            return "the path is not absolute"
         components = path_components(path)
         if not components:
             return "the volume root"
@@ -463,12 +471,21 @@ def _has_compressed_attribute(info: os.stat_result) -> bool:
 
 
 def device(path: str) -> int | None:
-    """``st_dev`` of a path (falling back to its parent for not-yet-created paths)."""
-    probe = path if os.path.lexists(path) else os.path.dirname(path) or "."
-    try:
-        return os.stat(probe).st_dev
-    except OSError:
-        return None
+    """``st_dev`` of ``path``, or of its nearest existing ancestor.
+
+    Destination parents do not exist yet when an op is re-validated, so the walk
+    up is what makes "is this a same-volume move?" answerable *before* anything
+    is created.
+    """
+    probe = os.path.abspath(path)
+    while True:
+        try:
+            return os.stat(probe).st_dev
+        except OSError:
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                return None
+            probe = parent
 
 
 def same_volume(first: str, second: str) -> bool:
