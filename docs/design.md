@@ -148,17 +148,16 @@ Built-in packs (v0.1): `windows.toml`, `dev.toml`, `browsers.toml`, `media.toml`
 
 ## 9. Desktop app — screens & flows
 
-The product is the GUI (PySide6 widgets). One window, left navigation, five screens:
+The product is the GUI (PySide6 widgets). One window, left navigation, four areas:
 
-1. **Import** — drag & drop or file picker for a WizTree CSV; parsing progress (rows/sec); auto-detected drives; target drive(s) + free-space reserve + size filters; "Analyze" never blocks the UI.
-2. **Dashboard** — drive usage summary, category breakdown (bars / treemap), top directories & files (sortable, filterable), search.
-3. **Suggestions** — candidates grouped by kind (Safe to delete / Move / Review); each row shows path, size, tier, confidence, "why"; editable destination for moves; bulk select; live total of selected gains.
-4. **Plan & Execute** — the consolidated course of action; per-item approve/reject (backed by a plan_id-bound approved set); budget/conflict warnings; **Dry-run preview** (exactly what will happen); **Execute** behind an explicit confirmation dialog with live per-item progress; failures surfaced, never hidden; **Undo** view (journal history, one-click revert with verification).
-5. **Settings** — thresholds, target drives, quarantine location, rule-pack overrides, AI configuration (optional).
+1. **Import** — drag & drop or file picker for a WizTree CSV; parsing progress (rows/sec); target drive(s) + free-space reserve + size filters; "Analyze" never blocks the UI.
+2. **Opportunities — the core screen.** One list of files and folders **sorted by potential gain, biggest wins first**. "Gain" = estimated bytes freed on the current drive by the suggested action (delete: full size; move: full size; compress: estimated savings; link/dedupe: recoverable duplicate bytes). Folder rows aggregate their descendants and selecting a folder cascades (no double counting).
+   Every row carries a **suggested solution** — produced by the rule engine, with the AI system filling in and refining the rest: *Delete (quarantine)* / *Move to <drive>* / *Compress* / *Native tool* / *Link or dedupe* / *Review* — or an explicit ***No action*** with the reason when nothing can safely be done. Columns: select | path (mono) | size | est. gain | suggested solution + one-line why | tier | confidence. Filters: size / category / tier / state (has action / no action / undecided); search; bulk select; a compact summary strip (totals, drives, categories).
+   A **details pane** shows the selected item: full reasoning, side effects, alternatives (delete vs. move vs. compress vs. native), move destination editor, and per-item AI actions ("Explain with AI", "Suggest with AI").
+3. **Plan & Execute** — selected opportunities become a consolidated plan: per-item approve/reject; budget/conflict warnings; **Dry-run preview** (exactly what will happen); **Execute** behind an explicit confirmation dialog with live per-item progress (failures surfaced, never hidden); **Undo** view (journal history, one-click revert with verification).
+4. **Settings** — thresholds, target drives, quarantine location, rule-pack overrides, AI providers (optional).
 
-AI assists (optional, off by default) surface inside these screens: "Explain this selection", "Review the plan" (adds annotations), "Ask about my disk" — advisory only, never executable.
-
-Exports the app can write on request: `plan.json` (the contract), `report.md` (shareable summary), and a static `report.html` *document* (convenience — not the app itself).
+**No chat surface.** The AI lives inline where decisions happen: the suggested-solution column, the details pane (explanations, alternatives), plan review annotations, and one-click "apply as rule" — all rendered next to the items they concern. Exports the app can write on request: `plan.json` (the contract), `report.md` (shareable summary), and a static `report.html` *document* (convenience — not the app itself).
 
 ## 9.1 Design language (applies to every screen)
 
@@ -171,25 +170,25 @@ Exports the app can write on request: `plan.json` (the contract), `report.md` (s
 - **Icons:** bundled Lucide SVG subset (ISC license; attribution file included). No emoji in UI chrome.
 - **Motion:** subtle only — 150–200 ms fades for panels/dialogs; nothing decorative; all engine work stays off the UI thread.
 - **Accessibility:** full keyboard navigation with visible focus states; contrast-safe in both themes; scalable text; labels on every input and icon-only button.
-- **AI surfaces:** the assistant is a right-docked toggleable panel: streaming answers, markdown rendering, suggestion chips, clear/restart controls, provider/status line. It must feel like part of the app — not a bolted-on chat box.
+- **AI surfaces:** inline where decisions happen — the **Suggested solution** column in the ranked list, a details pane with reasoning/alternatives and one-shot "Explain with AI", "Review plan" annotations, and "Apply as rule" on classifications. **No chat surface** — suggestions render next to the items they concern.
 
 ## 10. AI assist layer (optional) — see research doc
 
-Verdict (details in [`research/ai-and-alternatives.md`](research/ai-and-alternatives.md)): **hybrid**. The deterministic core makes every decision and computes all numbers; the AI layer is a **first-class part of the app experience — not a barebones add-on** — while staying unprivileged: it suggests, the engine verifies, the user approves, the executor acts.
+Verdict (details in [`research/ai-and-alternatives.md`](research/ai-and-alternatives.md)): **hybrid**, and the AI's headline job is the per-item **suggested solution**: for every entry the rules don't decide, the AI system proposes a course of action — or an explicit *No action* when nothing can safely be done. The list is ranked by gain, so the biggest wins surface first with their remedy attached.
 
 **Capabilities (each bounded, schema-validated, dataset-locked):**
 
-1. `classify` — label unmatched/ambiguous entries in bounded batches (category + confidence + evidence). Accepted results can be **promoted into user rule-pack entries** with one click.
-2. `explain` — deep explanation for a selected item/selection: what it is, why it is safe or risky, what happens if acted on.
-3. `summarize` — narrate the plan/report in plain language.
-4. `review` — scan a plan for overlooked risks; results attach to plan items as severity-tagged annotations.
-5. `ask` — conversational Q&A over pre-aggregated statistics (threads persisted; context bounded — never the raw export).
+1. `suggest` — solution suggestions for list items, single or batched (action type from the engine's allowed vocabulary, "why", confidence, side effects, alternatives; supports *No action* / *Review* when uncertain). Results cached per entry; large lists fill in background batches.
+2. `classify` — labels for ambiguous/matched-weakly entries; accepted results can be **promoted into user rule-pack entries**.
+3. `explain` — deep, one-shot explanation for a selected item/selection (streams into the details pane).
+4. `review` — scans a plan for overlooked risks; severity-tagged annotations attached to plan items.
+5. `summarize` — optional plain-language summary of the plan.
 
-**Engineering:** OpenAI-compatible `/chat/completions` (stdlib `urllib`) with **SSE streaming**; `/models` listing for the model picker; **multiple providers configured side-by-side** (name, base URL, key env var, model) with presets for ollama / lmstudio / openai / openrouter / custom; retries with backoff; actionable error taxonomy; conversation threads persisted locally (bounded history; context assembled from aggregates + current selection + plan digest).
+**Engineering:** OpenAI-compatible `/chat/completions` (stdlib `urllib`) with **SSE streaming**; `/models` listing for the model picker; **multiple providers configured side-by-side** (name, base URL, key env var, model) with presets for ollama / lmstudio / openai / openrouter / custom; retries with backoff; actionable error taxonomy. No conversation store — the product is not conversational.
 
-**Guardrails:** JSON-schema validation with one repair retry; dataset locking (every referenced path must exist in the index — hallucinated paths rejected); prompt-injection-resistant wrapping (filenames are data); response cache keyed by content hash; token/cost meter (visible in the UI when AI is on); `redact_paths` mode; **local-only mode** (block non-loopback endpoints); off until configured; graceful degradation to deterministic output.
+**Guardrails:** JSON-schema validation with one repair retry; dataset locking (every referenced path must exist in the index — hallucinated paths rejected); prompt-injection-resistant wrapping (filenames are data); response cache keyed by content hash; token/cost meter (visible in the UI when AI is on; batch runs show an estimate first); `redact_paths` mode; **local-only mode** (block non-loopback endpoints); off until configured; graceful degradation to deterministic output.
 
-**UI surfaces** (docs §9): docked assistant panel (streaming chat, markdown, suggestion chips), "Explain selection" on Suggestions/Plan, "Review plan" in the Plan view, provider management with "Test connection" (models + latency), cost meter in the status bar. AI output can never create an executable action by itself — it becomes annotations, suggestions, or rule proposals that a human accepts.
+**UI surfaces** (docs §9): the suggested-solution column and details pane, "Generate AI suggestions" batch action with progress + cost estimate, inline "Explain with AI", "Review plan" annotations, provider management with "Test connection" (models + latency), cost meter in the status bar. AI output can never create an executable action by itself — it becomes suggestions, annotations, or rule proposals that a human accepts.
 
 ## 11. Internal CLI (development & automation only)
 
