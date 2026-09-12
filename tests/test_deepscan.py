@@ -1033,6 +1033,16 @@ def test_stats_and_fixture_sizes_stay_in_sync(tmp_path: Path) -> None:
     assert stat.S_ISREG(tree.keep_link.stat().st_mode)
 
 
+def test_planting_twice_into_one_root_is_idempotent(tmp_path: Path) -> None:
+    """The demo helper can re-plant over its own tree (hard link and symlinks)."""
+    gen_deepscan.plant(tmp_path / "again")
+    again = gen_deepscan.plant(tmp_path / "again")
+    report = deepscan.scan([str(again.root)], now=NOW, min_size=0)
+    assert report.stats.files == len(again.files)
+    group = group_of(report, again.keep)
+    assert group is not None and group.copies == 3
+
+
 @pytest.mark.slow
 def test_perf_smoke_deep_scan(tmp_path: Path) -> None:
     """1,000 same-size files plus a planted trio: the partial pass settles them."""

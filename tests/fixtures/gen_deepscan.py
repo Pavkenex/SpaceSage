@@ -124,6 +124,23 @@ def _write(path: Path, data: bytes, *, mtime: int) -> Path:
     return path
 
 
+def _hardlink(source: Path, target: Path) -> Path:
+    """Create ``target`` as a hard link to ``source`` (re-planting is fine)."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() or target.is_symlink():
+        target.unlink()
+    os.link(source, target)
+    return target
+
+
+def _symlink(source: Path, target: Path, *, directory: bool) -> Path:
+    """Create ``target`` pointing at ``source`` (re-planting is fine)."""
+    if target.exists() or target.is_symlink():
+        target.unlink()
+    target.symlink_to(source, target_is_directory=directory)
+    return target
+
+
 def plant(root: Path, *, now: int = NOW) -> Tree:
     """Plant the tree under ``root`` (created if needed) and return its paths."""
     root = Path(root)
@@ -132,9 +149,7 @@ def plant(root: Path, *, now: int = NOW) -> Tree:
     keep = _write(data / "keep.bin", blob("keep", BLOCK), mtime=now - 10 * DAY)
     copy = _write(root / "backup" / "copy.bin", blob("keep", BLOCK), mtime=now - 20 * DAY)
     another = _write(root / "archive" / "another.bin", blob("keep", BLOCK), mtime=now - 30 * DAY)
-    keep_link = root / "links" / "keep-link.bin"
-    keep_link.parent.mkdir(parents=True, exist_ok=True)
-    os.link(keep, keep_link)
+    keep_link = _hardlink(keep, root / "links" / "keep-link.bin")
     trap = _write(data / "trap.bin", blob("trap", BLOCK), mtime=now - 10 * DAY)
     prefix_one = _write(
         data / "prefix-1.bin",
@@ -161,10 +176,8 @@ def plant(root: Path, *, now: int = NOW) -> Tree:
     link_file: Path | None = None
     symlinks = True
     try:
-        link_dir = data / "link-dir"
-        link_dir.symlink_to(real, target_is_directory=True)
-        link_file = data / "link-file.bin"
-        link_file.symlink_to(keep)
+        link_dir = _symlink(real, data / "link-dir", directory=True)
+        link_file = _symlink(keep, data / "link-file.bin", directory=False)
         if not link_dir.is_symlink() or not link_file.is_symlink():  # pragma: no cover
             symlinks = False
     except (OSError, NotImplementedError):  # pragma: no cover - platform limit
