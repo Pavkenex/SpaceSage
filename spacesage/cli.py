@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from spacesage import __version__, candidates, db, planner, rules, stats
+from spacesage import __version__, candidates, db, deepscan, planner, rules, stats
 from spacesage.ingest import IngestError, IngestProgress, RunStats, ingest_csv
 
 PROG = "spacesage"
@@ -45,6 +45,52 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"{PROG} {__version__}")
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")
+
+    deepscan_parser = subparsers.add_parser(
+        "deepscan",
+        help="hash-verify exact duplicate files on the live filesystem (read-only)",
+        description=(
+            "Walk one or more roots and prove which files are byte-identical: "
+            "group by size, hash the first 64 KiB, then read the full content of "
+            "whatever is still ambiguous. Symlinks, junctions and every other "
+            "reparse point are counted but never followed, and hard-linked paths "
+            "are reported as one physical copy instead of free space. Prints the "
+            "groups (members, reclaimable bytes, suggested keep policy and a "
+            "same-volume hardlink-dedupe suggestion) biggest win first. Strictly "
+            "read-only."
+        ),
+    )
+    deepscan_parser.add_argument(
+        "roots",
+        metavar="ROOT",
+        nargs="+",
+        help="directory (or drive) to scan; links are never followed",
+    )
+    deepscan_parser.add_argument(
+        "--min-size",
+        type=_size_arg,
+        default=deepscan.DEFAULT_MIN_SIZE,
+        metavar="SIZE",
+        help="ignore files smaller than this (bytes or '1 MiB'); default: %(default)s",
+    )
+    deepscan_parser.add_argument(
+        "--top",
+        type=int,
+        default=deepscan.DEFAULT_TOP,
+        metavar="N",
+        help="groups listed (0 = every group; --json is always complete); default: %(default)s",
+    )
+    deepscan_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the complete report as JSON (spacesage.deepscan/v1)",
+    )
+    deepscan_parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="print progress lines to stderr while walking and hashing",
+    )
+    deepscan_parser.set_defaults(handler=_run_deepscan)
 
     ingest = subparsers.add_parser(
         "ingest",
@@ -352,6 +398,40 @@ def _size_arg(value: str) -> int:
         return rules.parse_size(value)
     except rules.RulesError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from None
+
+
+class _DeepScanProgressPrinter:
+    """Progress callback used by ``deepscan --progress`` (one line per event)."""
+
+    def __call__(self, update: deepscan.ScanProgress) -> None:
+        print(
+            f"progress: {update.stage}: {update.files} files, "
+            f"{stats.format_bytes(update.bytes)} scanned, {update.candidates} candidates, "
+            f"{update.hashed} hashed ({stats.format_bytes(update.bytes_read)} read), "
+            f"{update.elapsed_s:.1f}s",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+def _run_deepscan(args: argparse.Namespace) -> int:
+    progress = _DeepScanProgressPrinter() if args.progress else None
+    try:
+        report = deepscan.scan(args.roots, min_size=args.min_size, progress=progress)
+    except deepscan.DeepScanError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        rendered = (
+            deepscan.render_json(report)
+            if args.json
+            else deepscan.render_text(report, top=args.top)
+        )
+    except deepscan.DeepScanError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(rendered, end="")
+    return 0
 
 
 def _run_ingest(args: argparse.Namespace) -> int:

@@ -35,6 +35,8 @@ Drives fill up and it's never obvious *what to do*:
 WizTree CSV ─► ingest ─► SQLite index ─► stats ─► classify(rules) ─► candidates ─► plan ─► report ─► approve ─► execute ─► undo
                                                                                       ▲
                                                                         AI assist (optional, off by default)
+                                                                                      ▲
+                                                 deep scan (optional): hashes the live filesystem, not the export
 ```
 
 ## 4. Module layout
@@ -340,6 +342,57 @@ the factors behind its rank.  The decisions that became part of the engine:
   [--json]`; `--kind` limits which kinds are *generated*, so the omitted kinds
   cannot claim paths from the listed ones.
 
+### 6.3 Deep scan — verified duplicates (S6 findings)
+
+`spacesage/deepscan.py` is the other half of `dupes-weak`: an **optional** scan
+that runs where the files are — the live filesystem, not the export — and
+proves which same-size files are byte-identical.  Pure arithmetic, no AI,
+strictly read-only; it is the evidence that can promote a weak cluster's bytes
+into an executable decision (the plan schema itself does not change here).
+The contract:
+
+- **Never follow a link.**  The walk uses `os.scandir` and skips symlinks,
+  junctions and every other reparse point: counted (`skipped_links`), never
+  descended into, so the scan can neither loop nor read outside the tree the
+  user named.  A *root* that is itself a link is refused with a message
+  (point it at the real path) instead of being silently followed.
+- **Two hash passes, one identity proof.**  Candidates — regular files at or
+  above `min_size` (default 1 MiB) — are grouped by size, and a size seen once
+  is never read.  The first 64 KiB of every remaining path is hashed and
+  grouped; only a group that still holds two members gets its whole content
+  read, and the group's `sha256` always covers the entire file, so a shared
+  64 KiB prefix is never enough.  Files no larger than the window are covered
+  by the first read and are not read twice; a path whose file identity is
+  already hashed is not re-read at all (`reused_reads`).  A file that changes
+  between the walk and the read is dropped and counted (`changed`), never
+  reported as a duplicate of a snapshot that no longer exists.
+- **Copies, not paths.**  Members are clustered by file identity
+  (`st_dev` + `st_ino`): `copies` counts physical payloads and the recoverable
+  figure is `(copies − 1) × size`, never `(paths − 1) × size`.  Verified paths
+  that are all *one* payload are reported as a **hardlink set** (`h1`, …) with
+  the bytes already saved — deleting them frees nothing, and the report says
+  so instead of inviting a pointless cleanup.
+- **Keep policy** is `newest-then-shortest-path`: keep the newest copy; ties
+  (including "nothing carries a usable timestamp") fall back to the shortest
+  path, then lexicographically, so directory order never decides.  Every group
+  carries the chosen `keep` and the plain-language `keep_reason`.
+- **Same-volume hardlink dedupe.**  Each group carries a `hardlink`
+  suggestion: re-create every other physical copy as a hardlink to the kept
+  path — the same bytes reclaimed, every path stays valid.  It is `feasible`
+  only when all copies sit on one known volume *and* the filesystem reports
+  file identities; otherwise the reason says why (hardlinks cannot cross
+  volumes) and the extra copies are deleted or moved instead.
+- **Report.**  `spacesage.deepscan/v1`: `roots` (absolute; nested roots are
+  scanned once, with a note), `thresholds`, `stats` (files, bytes, candidates,
+  skips, reads, errors), `summary` (groups, paths, copies, reclaimable bytes,
+  hardlink sets) and the `groups` / `hardlink_sets` lists, biggest reclaim
+  first with positional ids (`g1`…, `h1`…).  Issues are counted in full and
+  sampled in `error_samples`.
+- **CLI.**  `spacesage deepscan ROOT… [--min-size SIZE] [--top N] [--json]
+  [--progress]`; `--progress` reports the walk and the hash passes on stderr,
+  `--top` limits only the text listing (the JSON is always complete).  The
+  tests re-stat and re-hash the tree after a scan to pin the read-only claim.
+
 ## 7. Plan schema (plan.json v1) — the contract
 
 ```json
@@ -507,6 +560,7 @@ Not the product surface — a minimal CLI remains for development, CI and automa
 spacesage ingest <csv> [--db DIR]              # load an export into the index
 spacesage stats / classify / candidates        # engine stages
 spacesage plan [--to D: --reserve 20G]         # plan.json v1
+spacesage deepscan <root>… [--min-size 1M]    # hash-verify exact duplicates (live, read-only)
 spacesage apply <plan.json> --approve <approved.json> [--execute]
 spacesage undo <journal.jsonl>
 spacesage ai check|summarize|review            # AI diagnostics
