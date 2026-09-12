@@ -20,6 +20,10 @@ Conventions:
   :mod:`spacesage.ingest`.
 * ``ext`` is the lower-cased extension without the dot for files (``''`` when
   absent) and ``NULL`` for folders.
+* Schema v2 adds the materialised derivations ``dir_sizes`` and
+  ``app_footprints`` (``docs/design.md`` section 5); :mod:`spacesage.stats`
+  owns their contents and they are deleted with their entries by the foreign
+  key cascade.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 """Schema revision this build reads and writes."""
 
 DEFAULT_DB_NAME = "spacesage.db"
@@ -70,7 +74,47 @@ CREATE INDEX idx_entries_mtime  ON entries(mtime);
 CREATE INDEX idx_entries_ext    ON entries(ext);
 """
 
-MIGRATIONS: Mapping[int, str] = {1: _SCHEMA_V1}
+_SCHEMA_V2 = """
+-- Materialised derivations (docs/design.md section 5), owned and rebuilt by
+-- spacesage.stats.build_derived().  Byte values come from file rows only; the
+-- folder row's own (verbatim) totals are carried in export_bytes /
+-- export_allocated for the data-quality cross-check.
+CREATE TABLE dir_sizes (
+    entry_id               INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+    path                   TEXT    NOT NULL,
+    depth                  INTEGER NOT NULL,
+    bytes                  INTEGER NOT NULL,  -- subtree logical bytes, file rows only
+    unique_bytes           INTEGER NOT NULL,  -- hard-linked copies counted once
+    allocated_bytes        INTEGER NOT NULL,
+    unique_allocated_bytes INTEGER NOT NULL,
+    own_bytes              INTEGER NOT NULL,  -- files directly in this folder
+    file_count             INTEGER NOT NULL,
+    unique_file_count      INTEGER NOT NULL,
+    dir_count              INTEGER NOT NULL,  -- descendant folders
+    child_dir_count        INTEGER NOT NULL,
+    export_bytes           INTEGER NOT NULL,  -- the folder row's verbatim Size
+    export_allocated       INTEGER
+);
+
+CREATE INDEX idx_dir_sizes_bytes  ON dir_sizes(bytes DESC);
+CREATE INDEX idx_dir_sizes_unique ON dir_sizes(unique_bytes DESC);
+
+-- One row per application (direct child of an app root); spellings are merged
+-- case-insensitively, roots holds a JSON array of the matched folders.
+CREATE TABLE app_footprints (
+    app                    TEXT PRIMARY KEY,
+    bytes                  INTEGER NOT NULL,
+    unique_bytes           INTEGER NOT NULL,
+    allocated_bytes        INTEGER NOT NULL,
+    unique_allocated_bytes INTEGER NOT NULL,
+    file_count             INTEGER NOT NULL,
+    unique_file_count      INTEGER NOT NULL,
+    dir_count              INTEGER NOT NULL,
+    roots                  TEXT    NOT NULL
+);
+"""
+
+MIGRATIONS: Mapping[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2}
 """Migration scripts keyed by the schema version they produce."""
 
 INSERT_ENTRY_SQL = """
@@ -109,6 +153,7 @@ class IndexSummary:
     dirs: int
     files: int
     file_bytes: int
+    unique_file_bytes: int
     allocated_bytes: int
     unique_allocated_bytes: int
     hardlink_files: int
@@ -120,6 +165,7 @@ SELECT
     COALESCE(SUM(is_dir), 0),
     COALESCE(SUM(CASE WHEN is_dir = 0 THEN 1 ELSE 0 END), 0),
     COALESCE(SUM(CASE WHEN is_dir = 0 THEN size ELSE 0 END), 0),
+    COALESCE(SUM(CASE WHEN is_dir = 0 AND hardlink_flag = 0 THEN size ELSE 0 END), 0),
     COALESCE(SUM(CASE WHEN is_dir = 0 THEN allocated ELSE 0 END), 0),
     COALESCE(
         SUM(CASE WHEN is_dir = 0 AND hardlink_flag = 0 THEN allocated ELSE 0 END), 0
@@ -219,7 +265,7 @@ def index_summary(conn: sqlite3.Connection) -> IndexSummary:
     """Aggregates recomputed from the index (file rows only for byte totals)."""
     row = conn.execute(_SUMMARY_SQL).fetchone()
     if row is None:  # pragma: no cover - COUNT(*) always returns a row
-        return IndexSummary(0, 0, 0, 0, 0, 0, 0)
+        return IndexSummary(0, 0, 0, 0, 0, 0, 0, 0)
     return IndexSummary(*(int(value) for value in row))
 
 
@@ -234,12 +280,17 @@ def insert_entries(conn: sqlite3.Connection, rows: Iterable[EntryRow]) -> int:
 
 
 def clear_index(conn: sqlite3.Connection) -> None:
-    """Delete every indexed row (schema untouched); used by ``ingest --replace``."""
+    """Delete every indexed row (schema untouched); used by ``ingest --replace``.
+
+    The materialised derivations are cleared too: ``dir_sizes`` through the
+    foreign key cascade, ``app_footprints`` explicitly (it has no entry id).
+    """
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute("DELETE FROM entries")
         conn.execute("DELETE FROM drives")
         conn.execute("DELETE FROM meta")
+        conn.execute("DELETE FROM app_footprints")
     except BaseException:
         conn.rollback()
         raise

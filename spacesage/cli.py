@@ -9,11 +9,12 @@ the slices that implement them -- see ``docs/slices.md``.
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from spacesage import __version__, db
+from spacesage import __version__, db, stats
 from spacesage.ingest import IngestError, IngestProgress, RunStats, ingest_csv
 
 PROG = "spacesage"
@@ -70,6 +71,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="print progress lines to stderr while loading",
     )
     ingest.set_defaults(handler=_run_ingest)
+
+    stats_parser = subparsers.add_parser(
+        "stats",
+        help="aggregate an index: top dirs/files, extensions, age, apps",
+        description=(
+            "Aggregate an ingested index (read-only): the largest directories and "
+            "files, per-extension totals, age buckets and per-app footprints. Byte "
+            "totals come from file rows only; folder rows are cross-checked and "
+            "disagreements are reported as data-quality warnings."
+        ),
+    )
+    stats_parser.add_argument(
+        "--db",
+        metavar="PATH",
+        default=db.DEFAULT_DB_NAME,
+        help=("index database file, or a directory (then PATH/spacesage.db); default: %(default)s"),
+    )
+    stats_parser.add_argument(
+        "--by",
+        choices=("dir", "ext", "age", "app"),
+        default=None,
+        help="print only this breakdown (default: all of them)",
+    )
+    stats_parser.add_argument(
+        "--top",
+        type=int,
+        default=stats.DEFAULT_TOP,
+        metavar="N",
+        help="rows per ranked list (default: %(default)s)",
+    )
+    stats_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the complete report as JSON (every view)",
+    )
+    stats_parser.add_argument(
+        "--materialize",
+        action="store_true",
+        help="also rebuild the derived dir_sizes/app_footprints tables (writes to the index)",
+    )
+    stats_parser.set_defaults(handler=_run_stats)
     return parser
 
 
@@ -115,6 +157,42 @@ def _print_stats(stats: RunStats) -> None:
     print(f"duration: {stats.duration_s:.2f} s")
     print(f"rows/sec: {stats.rows_per_sec:.0f}")
     print(f"db: {stats.db_path} (schema v{db.SCHEMA_VERSION}, {stats.rows} entries)")
+
+
+def _run_stats(args: argparse.Namespace) -> int:
+    target = db.resolve_db_path(args.db)
+    if not target.is_file():
+        print(
+            f"error: no index at {target}; ingest a WizTree export first "
+            f"(spacesage ingest <csv> --db {args.db})",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        conn = db.open_db(target)
+    except (db.SchemaError, sqlite3.Error) as exc:
+        print(f"error: cannot open the index at {target}: {exc}", file=sys.stderr)
+        return 1
+    try:
+        try:
+            if args.materialize:
+                derived = stats.build_derived(conn)
+                print(
+                    f"derived: {derived.dir_sizes} dir_sizes rows, "
+                    f"{derived.app_footprints} app_footprints rows",
+                    file=sys.stderr,
+                )
+            report = stats.stats_report(conn, top=args.top, db_path=str(target))
+        except (stats.StatsError, db.SchemaError, sqlite3.Error) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            stats.render_json(report) if args.json else stats.render_text(report, by=args.by),
+            end="",
+        )
+        return 0
+    finally:
+        conn.close()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
