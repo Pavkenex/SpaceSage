@@ -13,6 +13,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from itertools import pairwise
 from pathlib import Path
@@ -714,6 +715,23 @@ def test_hardlink_suggestion_without_members() -> None:
     assert plan.link_to is None
 
 
+def test_a_deep_tree_is_walked_iteratively(tmp_path: Path) -> None:
+    """The walk keeps its own stack: depth is not limited by the interpreter."""
+    root = tmp_path / "deep"
+    current = root
+    for level in range(30):
+        current = current / f"d{level}"
+    current.mkdir(parents=True)
+    deep = current / "deep.bin"
+    deep.write_bytes(gen_deepscan.blob("deep", 5_000))
+    twin = root / "shallow.bin"
+    twin.write_bytes(gen_deepscan.blob("deep", 5_000))
+    report = deepscan.scan([str(root)], now=NOW, min_size=0)
+    assert report.stats.files == 2
+    group = group_of(report, twin)
+    assert group is not None and group.copies == 2
+
+
 # --------------------------------------------------------------------------- #
 # Read-only guarantee
 # --------------------------------------------------------------------------- #
@@ -1004,3 +1022,29 @@ def test_stats_and_fixture_sizes_stay_in_sync(tmp_path: Path) -> None:
     assert tree.prefix_one.stat().st_size == PREFIX > PARTIAL
     assert tree.small_one.stat().st_size == 4_000 < deepscan.DEFAULT_MIN_SIZE
     assert stat.S_ISREG(tree.keep_link.stat().st_mode)
+
+
+@pytest.mark.slow
+def test_perf_smoke_deep_scan(tmp_path: Path) -> None:
+    """1,000 same-size files plus a planted trio: the partial pass settles them."""
+    root = tmp_path / "many"
+    for bucket in range(50):
+        bucket_dir = root / f"b{bucket}"
+        bucket_dir.mkdir(parents=True)
+        for index in range(20):
+            target = bucket_dir / f"f{index}.bin"
+            target.write_bytes(gen_deepscan.blob(f"b{bucket}-{index}", 8_000))
+    trio = gen_deepscan.blob("perf-trio", 1_200_000)
+    for name in ("dup-a.bin", "dup-b.bin", "dup-c.bin"):
+        (root / name).write_bytes(trio)
+
+    started = time.monotonic()
+    report = deepscan.scan([str(root)], now=NOW, min_size=0)
+    elapsed = time.monotonic() - started
+
+    assert report.stats.files == 1_003
+    assert report.stats.partial_reads == 1_003  # every 8 KiB file shares one size
+    assert report.stats.full_reads == 3  # only the trio is large enough to need it
+    assert report.summary.groups == 1
+    assert report.summary.reclaimable_bytes == 2 * 1_200_000
+    assert elapsed < 30, f"scan took {elapsed:.1f}s"
