@@ -160,16 +160,36 @@ AI assists (optional, off by default) surface inside these screens: "Explain thi
 
 Exports the app can write on request: `plan.json` (the contract), `report.md` (shareable summary), and a static `report.html` *document* (convenience — not the app itself).
 
+## 9.1 Design language (applies to every screen)
+
+**Aesthetic:** clean, practical, modern. Information-dense but breathable; no gimmicks, no emoji in chrome; every control earns its place — a tool that respects the user's time.
+
+- **Themes:** light + dark, following the OS by default, with a toggle in Settings. One token set; components never hardcode colors.
+- **Tokens:** 4px spacing grid (4/8/12/16/24/32); 6–8px radii; subtle 1px borders; surface levels (base / raised / overlay); accent + semantic colors (success / warning / danger / info). Numeric columns right-aligned; paths and sizes in a mono stack; secondary text muted.
+- **Typography:** system font stack (Segoe UI on Windows); scale ~11/12/13/15/18/24; headings tight, body comfortable.
+- **Components:** metric cards for summaries; clean tables (no zebra striping; row hover; column sort; built-in search/filter); **tier badges** (T1/T2/T3) and confidence chips with consistent semantics; buttons — primary / secondary / danger (danger styling only for genuinely destructive actions); confirmation dialogs for anything irreversible; toasts for background results; real empty states (one-line explanation + primary action); progress with rows/sec and ETA where possible.
+- **Icons:** bundled Lucide SVG subset (ISC license; attribution file included). No emoji in UI chrome.
+- **Motion:** subtle only — 150–200 ms fades for panels/dialogs; nothing decorative; all engine work stays off the UI thread.
+- **Accessibility:** full keyboard navigation with visible focus states; contrast-safe in both themes; scalable text; labels on every input and icon-only button.
+- **AI surfaces:** the assistant is a right-docked toggleable panel: streaming answers, markdown rendering, suggestion chips, clear/restart controls, provider/status line. It must feel like part of the app — not a bolted-on chat box.
+
 ## 10. AI assist layer (optional) — see research doc
 
-Verdict (details in [`research/ai-and-alternatives.md`](research/ai-and-alternatives.md)): **hybrid**. The deterministic core makes every decision and computes all numbers. The AI layer adds four bounded, unprivileged capabilities:
+Verdict (details in [`research/ai-and-alternatives.md`](research/ai-and-alternatives.md)): **hybrid**. The deterministic core makes every decision and computes all numbers; the AI layer is a **first-class part of the app experience — not a barebones add-on** — while staying unprivileged: it suggests, the engine verifies, the user approves, the executor acts.
 
-1. `classify` — label unmatched/ambiguous entries in bounded batches (output: category + confidence + rationale, JSON-schema-validated, dataset-locked).
-2. `summarize` — narrate the plan/report in plain language.
-3. `review` — scan a plan for overlooked risks (adds REVIEW annotations only).
-4. `ask` — Q&A over pre-aggregated statistics (never the raw export).
+**Capabilities (each bounded, schema-validated, dataset-locked):**
 
-Config: `base_url`, `api_key`, `model`, `timeout`, `max_tokens`, `redact_paths`; presets for `ollama` (http://localhost:11434/v1), `lmstudio`, `openai`, `openrouter`, custom. Guardrails: schema validation with repair retry, every referenced path must exist in the index, AI output enters the same approval pipeline as everything else, response caching keyed by content hash, token/cost meter in reports, **off until configured**, graceful degradation to deterministic output. Filenames are treated as untrusted data (prompt-injection resistant prompts).
+1. `classify` — label unmatched/ambiguous entries in bounded batches (category + confidence + evidence). Accepted results can be **promoted into user rule-pack entries** with one click.
+2. `explain` — deep explanation for a selected item/selection: what it is, why it is safe or risky, what happens if acted on.
+3. `summarize` — narrate the plan/report in plain language.
+4. `review` — scan a plan for overlooked risks; results attach to plan items as severity-tagged annotations.
+5. `ask` — conversational Q&A over pre-aggregated statistics (threads persisted; context bounded — never the raw export).
+
+**Engineering:** OpenAI-compatible `/chat/completions` (stdlib `urllib`) with **SSE streaming**; `/models` listing for the model picker; **multiple providers configured side-by-side** (name, base URL, key env var, model) with presets for ollama / lmstudio / openai / openrouter / custom; retries with backoff; actionable error taxonomy; conversation threads persisted locally (bounded history; context assembled from aggregates + current selection + plan digest).
+
+**Guardrails:** JSON-schema validation with one repair retry; dataset locking (every referenced path must exist in the index — hallucinated paths rejected); prompt-injection-resistant wrapping (filenames are data); response cache keyed by content hash; token/cost meter (visible in the UI when AI is on); `redact_paths` mode; **local-only mode** (block non-loopback endpoints); off until configured; graceful degradation to deterministic output.
+
+**UI surfaces** (docs §9): docked assistant panel (streaming chat, markdown, suggestion chips), "Explain selection" on Suggestions/Plan, "Review plan" in the Plan view, provider management with "Test connection" (models + latency), cost meter in the status bar. AI output can never create an executable action by itself — it becomes annotations, suggestions, or rule proposals that a human accepts.
 
 ## 11. Internal CLI (development & automation only)
 
