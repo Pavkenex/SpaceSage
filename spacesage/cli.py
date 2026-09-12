@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from spacesage import __version__, candidates, db, rules, stats
+from spacesage import __version__, candidates, db, planner, rules, stats
 from spacesage.ingest import IngestError, IngestProgress, RunStats, ingest_csv
 
 PROG = "spacesage"
@@ -229,6 +229,107 @@ def build_parser() -> argparse.ArgumentParser:
         help="emit the complete report as JSON",
     )
     candidates_parser.set_defaults(handler=_run_candidates)
+
+    plan_parser = subparsers.add_parser(
+        "plan",
+        help="compose the ranked candidates into plan.json v1 (the course of action)",
+        description=(
+            "Compose the ranked candidates into one ordered, itemized plan: T1/T2 "
+            "quarantines first, then moves onto the target drives you pick (respecting "
+            "each drive's free space minus reserve), then compressions, then review and "
+            "native-tool items. Executable actions are only ever T1/T2 -- T3 is "
+            "report-only -- and every move names its destination and the link that keeps "
+            "the old path working. Prints the Markdown summary; --json prints plan.json, "
+            "-o writes it to a file. Read-only."
+        ),
+    )
+    plan_parser.add_argument(
+        "--db",
+        metavar="PATH",
+        default=db.DEFAULT_DB_NAME,
+        help=("index database file, or a directory (then PATH/spacesage.db); default: %(default)s"),
+    )
+    plan_parser.add_argument(
+        "--rules",
+        metavar="DIR",
+        default=None,
+        help="user rule-pack directory to load instead of ~/.config/spacesage/rules",
+    )
+    plan_parser.add_argument(
+        "--to",
+        action="append",
+        type=str,
+        default=[],
+        metavar="DRIVE",
+        help=(
+            "target drive or path for moves, repeatable ('D:'; '/mnt/data'); without it "
+            "every move candidate becomes a review item"
+        ),
+    )
+    plan_parser.add_argument(
+        "--reserve",
+        type=_size_arg,
+        default=planner.DEFAULT_RESERVE,
+        metavar="SIZE",
+        help="free space to keep untouched on every target; default: %(default)s",
+    )
+    plan_parser.add_argument(
+        "--free",
+        type=_size_arg,
+        default=None,
+        metavar="SIZE",
+        help=(
+            "assume this much free space on every target instead of measuring it "
+            "(drives this machine cannot see, scripting and tests)"
+        ),
+    )
+    plan_parser.add_argument(
+        "--min-size",
+        type=_size_arg,
+        default=candidates.DEFAULT_MIN_SIZE,
+        metavar="SIZE",
+        help="ignore entries smaller than this (bytes or '100 MiB'); default: %(default)s",
+    )
+    plan_parser.add_argument(
+        "--top",
+        type=int,
+        default=candidates.DEFAULT_TOP,
+        metavar="N",
+        help="candidates listed per kind before planning (0 = no limit); default: %(default)s",
+    )
+    plan_parser.add_argument(
+        "--stale-after-days",
+        type=float,
+        default=candidates.DEFAULT_STALE_DAYS,
+        metavar="DAYS",
+        help="age at which a big entry counts as stale; default: %(default)s",
+    )
+    plan_parser.add_argument(
+        "--dupes-min-copies",
+        type=int,
+        default=candidates.DEFAULT_DUPES_MIN_COPIES,
+        metavar="N",
+        help="same-name/same-size group size that counts as duplicates; default: %(default)s",
+    )
+    plan_parser.add_argument(
+        "--no-links",
+        action="store_true",
+        help="plan moves without linking the original path back (link_after NONE)",
+    )
+    plan_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print plan.json (spacesage.plan/v1) instead of the Markdown summary",
+    )
+    plan_parser.add_argument(
+        "-o",
+        "--output",
+        metavar="FILE",
+        type=Path,
+        default=None,
+        help="write plan.json to FILE ('-' writes it next to stdout as well)",
+    )
+    plan_parser.set_defaults(handler=_run_plan)
     return parser
 
 
@@ -437,6 +538,83 @@ def _run_candidates(args: argparse.Namespace) -> int:
             return 1
         print(
             candidates.render_json(report) if args.json else candidates.render_text(report),
+            end="",
+        )
+        return 0
+    finally:
+        conn.close()
+
+
+def _run_plan(args: argparse.Namespace) -> int:
+    try:
+        ruleset = _load_ruleset(args)
+    except rules.RulesError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        targets = [
+            planner.target_from_spec(spec, reserve=args.reserve, free=args.free) for spec in args.to
+        ]
+    except planner.PlannerError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    target = db.resolve_db_path(args.db)
+    if not target.is_file():
+        print(
+            f"error: no index at {target}; ingest a WizTree export first "
+            f"(spacesage ingest <csv> --db {args.db})",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        conn = db.open_db(target)
+    except (db.SchemaError, sqlite3.Error) as exc:
+        print(f"error: cannot open the index at {target}: {exc}", file=sys.stderr)
+        return 1
+    try:
+        if not targets:
+            print(
+                "note: no target drive selected (--to); move candidates are planned as "
+                "review items",
+                file=sys.stderr,
+            )
+        try:
+            # One reference point for the whole invocation: the ranked candidates
+            # and the plan's ages must agree.
+            moment = time.time()
+            plan = planner.build_plan(
+                conn,
+                ruleset,
+                targets=targets,
+                min_size=args.min_size,
+                top=args.top,
+                now=moment,
+                stale_after_days=args.stale_after_days,
+                dupes_min_copies=args.dupes_min_copies,
+                links=not args.no_links,
+                db_path=str(target),
+            )
+        except (
+            planner.PlannerError,
+            candidates.CandidatesError,
+            rules.RulesError,
+            db.SchemaError,
+            sqlite3.Error,
+        ) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if args.output is not None:
+            try:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(planner.render_json(plan), encoding="utf-8")
+            except OSError as exc:
+                print(f"error: cannot write {args.output}: {exc}", file=sys.stderr)
+                return 1
+            print(f"wrote {args.output}", file=sys.stderr)
+        print(
+            planner.render_json(plan) if args.json else planner.render_markdown(plan),
             end="",
         )
         return 0

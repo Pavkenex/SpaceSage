@@ -471,8 +471,12 @@ def _iso(value: datetime) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def _path_key(path: str) -> str:
-    """Comparison key of a path: single separator, case-folded for Windows paths."""
+def path_key(path: str) -> str:
+    """Comparison key of a path: single separator, case-folded for Windows paths.
+
+    Shared with :mod:`spacesage.planner`: the plan's "is this path inside that
+    one" questions must fold case exactly the way the ranking does.
+    """
     normalised = path.replace("/", "\\").rstrip("\\")
     return normalised.lower() if _WINDOWS_PREFIX_RE.match(path) else normalised
 
@@ -486,12 +490,12 @@ def _ancestors(key: str) -> Iterator[str]:
         index = key.rfind("\\")
 
 
-def _under_any(key: str, dirs: Collection[str]) -> bool:
-    """True when one of ``dirs`` (a set of keys) is a strict ancestor of ``key``."""
-    return any(ancestor in dirs for ancestor in _ancestors(key))
+def under(path_key_: str, dirs: Collection[str]) -> bool:
+    """True when one of ``dirs`` (a set of *keys*) is a strict ancestor of ``path_key_``."""
+    return any(ancestor in dirs for ancestor in _ancestors(path_key_))
 
 
-def _parent_path(path: str) -> str | None:
+def parent_path(path: str) -> str | None:
     """Display path of the folder holding ``path`` (``None`` for a root)."""
     index = max(path.rfind("\\"), path.rfind("/"))
     if index <= 0:
@@ -500,6 +504,12 @@ def _parent_path(path: str) -> str | None:
     if parent.endswith(":"):
         parent += "\\"
     return parent
+
+
+# Module-internal aliases: the call sites below predate the public names.
+_path_key = path_key
+_under_any = under
+_parent_path = parent_path
 
 
 def _plural(count: int, singular: str, plural: str | None = None) -> str:
@@ -1226,8 +1236,11 @@ __all__ = [
     "Score",
     "action_label",
     "candidate_report",
+    "parent_path",
+    "path_key",
     "recency_factor",
     "render_json",
     "render_text",
     "score_candidate",
+    "under",
 ]
