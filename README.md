@@ -14,6 +14,8 @@ Every suggestion carries a risk tier, a confidence, an estimated space gain, and
 
 Optionally plug in **any OpenAI-compatible LLM** (cloud or local — Ollama, LM Studio, vLLM, OpenAI, OpenRouter, …) to help classify the ambiguous long tail, narrate the plan, or review it for risks. The AI can suggest; it can never execute.
 
+It is a **local command-line program** — zero-dependency Python core, shipped as a single portable executable (Windows, PyInstaller). No server, no web app, no accounts. The approval flow lives in your terminal (`spacesage approve`); the HTML report is just a static file it writes, and the AI layer is optional.
+
 ## Status
 
 🚧 In development. The full design and build plan live in [`docs/design.md`](docs/design.md); the AI-vs-deterministic research behind the hybrid architecture is in [`docs/research/ai-and-alternatives.md`](docs/research/ai-and-alternatives.md). Work is tracked as slices in [`docs/slices.md`](docs/slices.md).

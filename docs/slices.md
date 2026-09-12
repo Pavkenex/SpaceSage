@@ -12,7 +12,7 @@ Ordered, dependency-chained slices. Each slice is one kanban task on the `spaces
 | S5 | Plan generator: plan.json v1, budgets for target drives, junction/symlink policy, golden tests, `plan` CLI | S4 |
 | S6 | Deep scan: exact duplicate groups via size+hash on the live filesystem, same-volume hardlink dedupe suggestions, `deepscan` CLI | S5 |
 | S7 | Executor + undo: dry-run/apply, quarantine, Windows (robocopy/mklink) + POSIX backends, journal, `undo`, re-validation, lock handling | S6 |
-| S8 | Reports: self-contained interactive HTML (checklist → approved.json export) + Markdown, golden tests, `report` CLI | S7 |
+| S8 | Reports & approval: static self-contained HTML document + Markdown + `approve` CLI (interactive/--select → approved.json), golden tests | S7 |
 | S9 | AI assist layer: OpenAI-compatible client, presets, schema validation, dataset locking, caching, cost meter, `ai check/summarize/review`, stub-server tests | S8 |
 | S10 | CLI/config/packaging: config TOML + env, `config` command, PyInstaller recipe + release workflow, docs (quickstart, safety, FAQ) | S9 |
 | S11 | E2E verification + v0.1.0: scenario generator → full pipeline incl. apply+undo in sandbox, all tests green, tag `v0.1.0` | S10 |

@@ -14,6 +14,8 @@ Drives fill up and it's never obvious *what to do*:
 
 **Goal:** from a single WizTree CSV export (+ a few preferences), produce a complete, ordered, safety-gated **course of action** — every item with a tier, confidence, expected gain, and a plain-language "why" — then optionally execute it with full undo.
 
+**Form factor:** a **local command-line program** — zero-dependency Python core, shipped as a single portable `spacesage.exe` for Windows (PyInstaller). No server, no web app, no accounts: it reads files, writes files, and only executes what you explicitly approve. The HTML report is a *static document* it generates; opening it is optional.
+
 ## 2. Safety principles (non-negotiable)
 
 1. **Analysis is read-only.** Execution requires an itemized, approved plan.
@@ -136,10 +138,13 @@ Built-in packs (v0.1): `windows.toml`, `dev.toml`, `browsers.toml`, `media.toml`
 - **Long paths:** `\\?\`-prefixing on Windows; `MAX_PATH` handling tests.
 - **Re-validation** right before every op, and again after (result verification).
 
-## 9. Reports
+## 9. Reports & approval
 
-- `report.html` — self-contained (no CDN): summary cards (total size, per-drive free, estimated gains), category breakdown bars, sortable/filterable tables (top dirs, top files, candidates, duplicate groups), and the action list as a **checklist** with per-item approve/reject + "export selected → approved.json". Works offline, opens in any browser.
-- `report.md` — same content in Markdown (for chat delivery).
+SpaceSage is a local program: there is **no server and no web app**. Its human-facing output is **documents**, and approval is a **program flow first**:
+
+- `report.md` — full report in Markdown (terminal-friendly, chat-friendly).
+- `report.html` — a **static, self-contained file** (inline CSS/JS, no CDN, no server): summary cards (total size, per-drive free, estimated gains), category bars, sortable/filterable tables (top dirs, top files, candidates, duplicate groups), and the action list as a visual checklist. Opening it is optional; it can also export the same `approved.json`.
+- `spacesage approve <plan.json> --select a1,a3 | --interactive | --tier T1` — the **primary approval path**: writes `approved.json` (itemized, plan_id-bound). `--interactive` is a terminal checklist.
 - `spacesage report --format html|md|json`.
 
 ## 10. AI assist layer (optional) — see research doc
@@ -162,7 +167,8 @@ spacesage classify                             # run rule packs → categories
 spacesage candidates [--kind delete|move|stale|dupes|app]
 spacesage deepscan <root>… [--yes]             # optional live hash scan (exact dupes)
 spacesage plan [--to D: --reserve 20G]         # → plan.json + summary
-spacesage report [--format html|md|json]
+spacesage approve <plan.json> [--select a1,a3 | --interactive | --tier T1]   # → approved.json (primary)
+spacesage report [--format html|md|json]       # static document, optional
 spacesage apply <plan.json> --approve <approved.json> [--execute]
 spacesage undo <journal.jsonl>
 spacesage ai check | ai summarize | ai review
@@ -191,7 +197,6 @@ Zero-dep core → `pipx install spacesage` or `python -m spacesage`. Windows sin
 - Decision memory: learn accept/reject preferences locally (no LLM) and re-rank suggestions.
 - Live-scan mode (skip WizTree) and export-diff mode ("what grew since last week?").
 - Scheduled rescans with alerts ("C: dropped 20 GB this week").
-- Optional local web UI (wizard: drop export → review → execute with progress).
 
 ## 16. Open questions
 
