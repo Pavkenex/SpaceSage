@@ -58,6 +58,7 @@ from .backend import (
     digest,
     is_compressed,
     is_under,
+    is_windows_path,
     join_path,
     link_points_at,
     plan_token,
@@ -456,6 +457,18 @@ def _is_absolute(path: str) -> bool:
     return os.path.isabs(path) or bool(
         re.match(r"^[A-Za-z]:[\\/]", path) or path.startswith("\\\\")
     )
+
+
+def _absolute(path: str | os.PathLike[str]) -> str:
+    """A root the user named, as the OS sees it (a relative one means the cwd's).
+
+    Windows-shaped paths are left exactly as written, so a plan from another
+    machine can still be resolved and previewed on a POSIX box.
+    """
+    text = os.fspath(path)
+    if is_windows_path(text):
+        return text
+    return os.path.abspath(text)
 
 
 def _under_targets(dest: str, plan_data: Mapping[str, object]) -> bool:
@@ -1004,11 +1017,17 @@ def apply_plan(
     plan_id, actions = plan_ops(plan_data)
     _check_manifest(manifest, plan_id, actions)
     be = backend if backend is not None else current_backend()
-    root = str(quarantine_root) if quarantine_root is not None else None
+    root = _absolute(quarantine_root) if quarantine_root is not None else None
     approved = set(manifest.approved)
     selected = tuple(action for action in actions if action.id in approved)
     resolved = tuple(
-        _resolve(action, plan_data=plan_data, be=be, quarantine_root=root, within=within)
+        _resolve(
+            action,
+            plan_data=plan_data,
+            be=be,
+            quarantine_root=root,
+            within=tuple(_absolute(entry) for entry in within),
+        )
         for action in selected
     )
 

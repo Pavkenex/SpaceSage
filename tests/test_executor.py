@@ -597,6 +597,20 @@ def test_dry_run_with_an_explicit_journal_records_a_run(tmp_path: Path) -> None:
     assert not result.quarantine.exists()
 
 
+def test_relative_roots_resolve_against_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = gen_executor.scenario(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    report = executor.apply_plan(
+        result.plan, result.manifest("a1"), quarantine_root="q", within=["."]
+    )
+    assert report.ops[0].outcome == "planned"
+    assert report.quarantine_root == str(tmp_path / "q")
+    assert report.ops[0].steps[0].dest is not None
+    assert report.ops[0].steps[0].dest.startswith(str(tmp_path / "q"))
+
+
 def test_apply_accepts_a_planner_plan_object(tmp_path: Path) -> None:
     result = gen_executor.scenario(tmp_path)
     actions = gen_executor.standard_actions(result.root, result.target)
