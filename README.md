@@ -41,7 +41,13 @@ uv run ruff format --check .   # formatting
 uv run mypy spacesage          # types (strict)
 ```
 
-The internal CLI (development/automation only) runs as `uv run python -m spacesage --version`, or via the installed `spacesage` console script. GUI dependencies arrive with the desktop-app slices — see [`docs/slices.md`](docs/slices.md) and [`docs/dev-environment.md`](docs/dev-environment.md).
+The internal CLI (development/automation only) runs as `uv run python -m spacesage --version`, or via the installed `spacesage` console script. The first engine stage — streaming a WizTree CSV export into the SQLite index — is available now:
+
+```sh
+uv run python -m spacesage ingest export.csv --db index.db   # --replace reloads, --progress reports to stderr
+```
+
+GUI dependencies arrive with the desktop-app slices — see [`docs/slices.md`](docs/slices.md) and [`docs/dev-environment.md`](docs/dev-environment.md).
 
 ## License
 

@@ -1,0 +1,604 @@
+"""Synthetic WizTree CSV export generator with exact ground truth.
+
+Generates exports that mimic WizTree's CSV output closely enough to drive
+ingest tests at scale:
+
+* full paths in ``File Name``; folders end with a trailing backslash,
+* folder rows carry **descendant totals** in ``Size``/``Allocated``,
+* ``Modified`` is ``yyyy/MM/dd HH:mm:ss`` (empty for some folders),
+* ``Attributes`` is the raw 8-hex-digit attribute cell,
+* hard-linked files get a leading zero on a non-zero ``Allocated`` value,
+* optional nasty cases: names with commas/quotes/unicode, reordered and extra
+  columns, a drive capacity/summary row, UTF-8 BOM and UTF-16 encodings.
+
+Determinism: identical options produce byte-identical files, so fixtures can
+be regenerated and compared.  This module is deliberately **independent of the
+``spacesage`` package** -- it is the oracle the ingest tests compare against,
+not a wrapper around the parser.
+
+The generated tree is grown breadth-first until at least ``min_files`` files
+exist *and* at least ``min_depth`` levels of folders were created, so the same
+generator serves small edge-case fixtures and the 250k-row performance smoke.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import random
+import sys
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import NamedTuple
+
+STANDARD_COLUMNS = (
+    "File Name",
+    "Size",
+    "Allocated",
+    "Modified",
+    "Attributes",
+    "Files",
+    "Folders",
+)
+
+#: Reordered standard columns plus extra columns the parser must ignore.
+EXTRA_COLUMNS = (
+    "Modified",
+    "File Name",
+    "Size",
+    "Allocated",
+    "Attributes",
+    "Files",
+    "Folders",
+    "IsHidden",
+    "IsSystem",
+)
+
+_ENCODINGS = ("utf-8", "utf-8-sig", "utf-16")
+
+_WORDS = (
+    "data",
+    "cache",
+    "report",
+    "photo",
+    "video",
+    "archive",
+    "build",
+    "logs",
+    "temp",
+    "assets",
+    "backup",
+    "install",
+    "config",
+    "index",
+    "model",
+    "notes",
+    "music",
+    "clips",
+    "saves",
+    "maps",
+    "project",
+    "exports",
+    "downloads",
+    "shaders",
+    "textures",
+)
+
+_DIR_WORDS = (
+    "Users",
+    "Windows",
+    "ProgramData",
+    "AppData",
+    "Documents",
+    "Media",
+    "Games",
+    "Projects",
+    "Cache",
+    "Backup",
+    "Installers",
+    "Logs",
+    "Temp",
+    "VirtualBox",
+    "node_modules",
+)
+
+_EXTS = ("bin", "dat", "log", "tmp", "dll", "exe", "json", "txt", "mp4", "png", "iso", "zip")
+
+_UNICODE_SAMPLES = ("résumé", "日本語", "файл", "naïve", "Ünïcode", "数据", "αβγ")
+
+_BASE_TIME = datetime(2026, 1, 1, 12, 0, 0)
+
+_CAPACITY_BYTES = "512110190592"
+_FREE_BYTES = "123456789"
+
+
+@dataclass(frozen=True)
+class GenOptions:
+    """Knobs for :func:`generate` (defaults produce a small, nasty tree)."""
+
+    root: str = "C:"
+    seed: int = 20260912
+    min_files: int = 250
+    files_per_dir: int = 7
+    dirs_per_dir: int = 3
+    min_depth: int = 3
+    min_size: int = 0
+    max_size: int = 4_000_000
+    cluster: int = 4096
+    hardlink_pairs: int | None = None
+    hardlink_ratio: float = 0.05
+    zero_byte_ratio: float = 0.03
+    unicode_ratio: float = 0.10
+    comma_ratio: float = 0.05
+    quote_ratio: float = 0.02
+    long_name_ratio: float = 0.02
+    empty_dir_mtime_ratio: float = 0.25
+    encoding: str = "utf-8"
+    header_style: str = "standard"
+    capacity_row: bool = False
+    collect_entries: bool = True
+
+
+class TruthEntry(NamedTuple):
+    """One exported row as it must come back out of the index."""
+
+    path: str
+    name: str
+    is_dir: bool
+    size: int
+    allocated: int | None
+    hardlink: bool
+    mtime_raw: str
+    mtime: int | None
+    attrs: str
+    depth: int
+    ext: str | None
+    parent_path: str | None
+
+
+@dataclass(frozen=True)
+class GroundTruth:
+    """Everything the tests assert against."""
+
+    root: str
+    entries: tuple[TruthEntry, ...]
+    files: int
+    dirs: int
+    total_file_bytes: int
+    allocated_bytes: int
+    unique_allocated_bytes: int
+    hardlink_files: int
+    capacity_rows: int
+
+
+@dataclass(frozen=True)
+class GeneratedExport:
+    """A written export plus its ground truth."""
+
+    path: Path
+    truth: GroundTruth
+    rows: int
+    csv_bytes: int
+
+
+class _File(NamedTuple):
+    name: str
+    size: int
+    allocated: int
+    hardlink: bool
+    mtime_raw: str
+    attrs: str
+
+
+@dataclass(slots=True)
+class _Dir:
+    path: str  # export form: trailing backslash
+    level: int
+    files: list[_File] = field(default_factory=list)
+    children: list[_Dir] = field(default_factory=list)
+    # subtree aggregates, filled by _aggregate()
+    file_count: int = 0
+    folder_count: int = 0
+    subtree_size: int = 0
+    subtree_allocated: int = 0
+
+
+@dataclass
+class _Totals:
+    files: int = 0
+    dirs: int = 0
+    size: int = 0
+    allocated: int = 0
+    unique_allocated: int = 0
+    hardlinks: int = 0
+
+
+# --------------------------------------------------------------------------- #
+# Name / value generation
+# --------------------------------------------------------------------------- #
+
+
+def _file_name(rng: random.Random, options: GenOptions, index: int) -> str:
+    word = rng.choice(_WORDS)
+    stem = f"{word}_{index:05d}"
+    if rng.random() < options.comma_ratio:
+        stem = f"{word}, {rng.choice(_WORDS)} {index:05d}"
+    if rng.random() < options.quote_ratio:
+        stem = f'{word} "{rng.choice(_WORDS)}" {index:05d}'
+    if rng.random() < options.unicode_ratio:
+        stem = f"{rng.choice(_UNICODE_SAMPLES)} {stem}"
+    if rng.random() < options.long_name_ratio:
+        stem = ("long-" + word * 24)[:150] + f"_{index:05d}"
+    return f"{stem}.{rng.choice(_EXTS)}"
+
+
+def _dir_name(rng: random.Random, options: GenOptions, index: int) -> str:
+    word = rng.choice(_DIR_WORDS)
+    name = f"{word} {index:02d}"
+    if rng.random() < options.comma_ratio:
+        name = f"{word}, {rng.choice(_DIR_WORDS)} {index:02d}"
+    if rng.random() < options.unicode_ratio:
+        name = f"{rng.choice(_UNICODE_SAMPLES)} {name}"
+    return name
+
+
+def _mtime_text(rng: random.Random) -> str:
+    stamp = _BASE_TIME - timedelta(days=rng.randrange(0, 2200), seconds=rng.randrange(0, 86_400))
+    return stamp.strftime("%Y/%m/%d %H:%M:%S")
+
+
+def _mtime_epoch(raw: str) -> int | None:
+    if not raw:
+        return None
+    return int(datetime.strptime(raw, "%Y/%m/%d %H:%M:%S").replace(tzinfo=UTC).timestamp())
+
+
+def _make_file(rng: random.Random, options: GenOptions, index: int) -> _File:
+    if rng.random() < options.zero_byte_ratio:
+        size = 0
+    else:
+        size = rng.randint(options.min_size, options.max_size)
+    allocated = 0 if size == 0 else -(-size // options.cluster) * options.cluster
+    attrs = rng.choice(("00000020", "00000080", "00000022"))
+    return _File(
+        name=_file_name(rng, options, index),
+        size=size,
+        allocated=allocated,
+        hardlink=False,
+        mtime_raw=_mtime_text(rng),
+        attrs=attrs,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Tree construction
+# --------------------------------------------------------------------------- #
+
+
+def _build_tree(rng: random.Random, options: GenOptions) -> _Dir:
+    root_path = options.root if options.root.endswith("\\") else f"{options.root}\\"
+    root = _Dir(path=root_path, level=0)
+    levels: list[list[_Dir]] = [[root]]
+    files_total = 0
+    max_levels = 64
+    while True:
+        level_index = len(levels) - 1
+        for node in levels[level_index]:
+            for index in range(options.files_per_dir):
+                node.files.append(_make_file(rng, options, index))
+                files_total += 1
+        if (files_total >= options.min_files and level_index >= options.min_depth) or (
+            level_index + 1 >= max_levels
+        ):
+            break
+        next_level: list[_Dir] = []
+        for node in levels[level_index]:
+            for _index in range(options.dirs_per_dir):
+                child = _Dir(path="", level=node.level + 1)
+                node.children.append(child)
+                next_level.append(child)
+        levels.append(next_level)
+
+    all_dirs = [node for level in levels for node in level]
+    for node in all_dirs:
+        for index, child in enumerate(node.children):
+            child.path = f"{node.path}{_dir_name(rng, options, index)}\\"
+    _mark_hardlinks(rng, all_dirs, options, files_total)
+    _aggregate(root)
+    return root
+
+
+def _mark_hardlinks(
+    rng: random.Random, dirs: list[_Dir], options: GenOptions, files_total: int
+) -> None:
+    """Force ``n`` files to share another file's payload (WizTree hardlink marker)."""
+    target = options.hardlink_pairs
+    if target is None:
+        target = int(files_total * options.hardlink_ratio)
+        if target == 0 and options.hardlink_ratio > 0 and files_total >= 2:
+            target = 1  # tests may rely on at least one marked pair
+    available = sum(len(node.files) * (len(node.files) - 1) // 2 for node in dirs)
+    target = min(target, available)
+    marked = 0
+    attempts = 0
+    while marked < target and attempts < max(target * 100, 100):
+        attempts += 1
+        node = rng.choice(dirs)
+        if len(node.files) < 2:
+            continue
+        first_index, second_index = rng.sample(range(len(node.files)), 2)
+        first, second = node.files[first_index], node.files[second_index]
+        if first.hardlink or second.hardlink or first.allocated == 0:
+            continue
+        node.files[second_index] = second._replace(
+            size=first.size, allocated=first.allocated, hardlink=True
+        )
+        marked += 1
+    if marked < target:  # pragma: no cover - only when the tree is degenerate
+        raise ValueError(f"could only mark {marked} of {target} hardlink pairs")
+
+
+def _aggregate(node: _Dir) -> None:
+    node.file_count = len(node.files)
+    node.folder_count = 0
+    node.subtree_size = sum(item.size for item in node.files)
+    # hard-linked payloads are already accounted for by their source entry
+    node.subtree_allocated = sum(item.allocated for item in node.files if not item.hardlink)
+    for child in node.children:
+        _aggregate(child)
+        node.file_count += child.file_count
+        node.folder_count += 1 + child.folder_count
+        node.subtree_size += child.subtree_size
+        node.subtree_allocated += child.subtree_allocated
+
+
+# --------------------------------------------------------------------------- #
+# Truth helpers (small mirror implementations of the documented rules)
+# --------------------------------------------------------------------------- #
+
+
+def _normalise_dir(path: str) -> str:
+    stripped = path.rstrip("\\/")
+    if not stripped or (len(stripped) == 2 and stripped[1] == ":"):
+        return path
+    return stripped
+
+
+def _entry_name(stored: str, *, is_dir: bool) -> str:
+    if is_dir:
+        if stored.endswith("\\") and len(stored) <= 3:  # drive root "C:\"
+            return stored[:-1]
+        return stored.rsplit("\\", 1)[-1]
+    return stored.rsplit("\\", 1)[-1]
+
+
+def _entry_ext(name: str) -> str:
+    suffix = name.rsplit(".", 1)[1].lower() if "." in name else ""
+    return "" if name.startswith(".") or not suffix else suffix
+
+
+def _truth_entry(
+    *,
+    path: str,
+    is_dir: bool,
+    size: int,
+    allocated: int,
+    hardlink: bool,
+    mtime_raw: str,
+    attrs: str,
+    depth: int,
+    parent_path: str | None,
+) -> TruthEntry:
+    stored = _normalise_dir(path) if is_dir else path
+    name = _entry_name(stored, is_dir=is_dir)
+    return TruthEntry(
+        path=stored,
+        name=name,
+        is_dir=is_dir,
+        size=size,
+        allocated=allocated,
+        hardlink=hardlink,
+        mtime_raw=mtime_raw,
+        mtime=_mtime_epoch(mtime_raw),
+        attrs=attrs,
+        depth=depth,
+        ext=None if is_dir else _entry_ext(name),
+        parent_path=parent_path,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Export writing
+# --------------------------------------------------------------------------- #
+
+
+def _dir_mtime(node: _Dir, options: GenOptions) -> str:
+    """Deterministic per-directory ``Modified`` cell (empty for some folders)."""
+    rng = random.Random(f"{options.seed}:{node.path}")
+    return "" if rng.random() < options.empty_dir_mtime_ratio else _mtime_text(rng)
+
+
+def _extras(options: GenOptions, *, hidden: bool) -> dict[str, str]:
+    if options.header_style != "extra":
+        return {}
+    return {"IsHidden": "1" if hidden else "0", "IsSystem": "0"}
+
+
+def _walk(
+    node: _Dir,
+    options: GenOptions,
+    totals: _Totals,
+    entries: list[TruthEntry],
+    parent_path: str | None,
+) -> Iterator[dict[str, str]]:
+    dir_mtime = _dir_mtime(node, options)
+    totals.dirs += 1
+    if options.collect_entries:
+        entries.append(
+            _truth_entry(
+                path=node.path,
+                is_dir=True,
+                size=node.subtree_size,
+                allocated=node.subtree_allocated,
+                hardlink=False,
+                mtime_raw=dir_mtime,
+                attrs="00000010",
+                depth=node.level,
+                parent_path=parent_path,
+            )
+        )
+    yield {
+        "File Name": node.path,
+        "Size": str(node.subtree_size),
+        "Allocated": str(node.subtree_allocated),
+        "Modified": dir_mtime,
+        "Attributes": "00000010",
+        "Files": str(node.file_count),
+        "Folders": str(node.folder_count),
+        **_extras(options, hidden=False),
+    }
+    for item in node.files:
+        path = f"{node.path}{item.name}"
+        totals.files += 1
+        totals.size += item.size
+        totals.allocated += item.allocated
+        if item.hardlink:
+            totals.hardlinks += 1
+        else:
+            totals.unique_allocated += item.allocated
+        if options.collect_entries:
+            entries.append(
+                _truth_entry(
+                    path=path,
+                    is_dir=False,
+                    size=item.size,
+                    allocated=item.allocated,
+                    hardlink=item.hardlink,
+                    mtime_raw=item.mtime_raw,
+                    attrs=item.attrs,
+                    depth=node.level + 1,
+                    parent_path=_normalise_dir(node.path),
+                )
+            )
+        allocated_cell = (
+            f"0{item.allocated}" if item.hardlink and item.allocated > 0 else str(item.allocated)
+        )
+        yield {
+            "File Name": path,
+            "Size": str(item.size),
+            "Allocated": allocated_cell,
+            "Modified": item.mtime_raw,
+            "Attributes": item.attrs,
+            "Files": "0",
+            "Folders": "0",
+            **_extras(options, hidden=item.attrs.endswith("22")),
+        }
+    for child in node.children:
+        yield from _walk(child, options, totals, entries, parent_path=_normalise_dir(node.path))
+
+
+def generate(path: str | Path, options: GenOptions | None = None) -> GeneratedExport:
+    """Write a synthetic export to ``path`` and return it with its ground truth."""
+    resolved = options if options is not None else GenOptions()
+    if resolved.encoding not in _ENCODINGS:
+        raise ValueError(f"unsupported encoding {resolved.encoding!r}; pick one of {_ENCODINGS}")
+    if resolved.header_style not in ("standard", "extra"):
+        raise ValueError(f"unsupported header_style {resolved.header_style!r}")
+
+    rng = random.Random(resolved.seed)
+    root = _build_tree(rng, resolved)
+    columns = STANDARD_COLUMNS if resolved.header_style == "standard" else EXTRA_COLUMNS
+
+    totals = _Totals()
+    entries: list[TruthEntry] = []
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", encoding=resolved.encoding, newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(columns)
+        for cells in _walk(root, resolved, totals, entries, parent_path=None):
+            writer.writerow([cells.get(column, "") for column in columns])
+        if resolved.capacity_row:
+            writer.writerow(_capacity_cells(resolved, columns))
+
+    truth = GroundTruth(
+        root=root.path,
+        entries=tuple(entries),
+        files=totals.files,
+        dirs=totals.dirs,
+        total_file_bytes=totals.size,
+        allocated_bytes=totals.allocated,
+        unique_allocated_bytes=totals.unique_allocated,
+        hardlink_files=totals.hardlinks,
+        capacity_rows=1 if resolved.capacity_row else 0,
+    )
+    return GeneratedExport(
+        path=out, truth=truth, rows=totals.files + totals.dirs, csv_bytes=out.stat().st_size
+    )
+
+
+def _capacity_cells(options: GenOptions, columns: tuple[str, ...]) -> list[str]:
+    """A drive summary row: ``C:`` (no trailing separator) with empty metadata."""
+    cells = {
+        "File Name": options.root,
+        "Size": _CAPACITY_BYTES,
+        "Allocated": _FREE_BYTES,
+        "Modified": "",
+        "Attributes": "",
+        "Files": "",
+        "Folders": "",
+    }
+    return [cells.get(column, "") for column in columns]
+
+
+def _main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Generate a synthetic WizTree CSV export with known ground truth."
+    )
+    parser.add_argument("--out", type=Path, required=True, help="CSV file to write")
+    parser.add_argument("--min-files", type=int, default=250)
+    parser.add_argument("--seed", type=int, default=20260912)
+    parser.add_argument("--encoding", choices=_ENCODINGS, default="utf-8")
+    parser.add_argument("--header-style", choices=("standard", "extra"), default="standard")
+    parser.add_argument("--capacity-row", action="store_true")
+    parser.add_argument("--hardlink-ratio", type=float, default=0.05)
+    parser.add_argument("--root", default="C:")
+    args = parser.parse_args(argv)
+
+    result = generate(
+        args.out,
+        GenOptions(
+            root=args.root,
+            seed=args.seed,
+            min_files=args.min_files,
+            encoding=args.encoding,
+            header_style=args.header_style,
+            capacity_row=args.capacity_row,
+            hardlink_ratio=args.hardlink_ratio,
+        ),
+    )
+    truth = result.truth
+    print(
+        json.dumps(
+            {
+                "path": str(result.path),
+                "rows": result.rows,
+                "files": truth.files,
+                "dirs": truth.dirs,
+                "total_file_bytes": truth.total_file_bytes,
+                "allocated_bytes": truth.allocated_bytes,
+                "unique_allocated_bytes": truth.unique_allocated_bytes,
+                "hardlink_files": truth.hardlink_files,
+                "csv_bytes": result.csv_bytes,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_main())

@@ -89,6 +89,73 @@ tests/
 
 **Hard links:** a leading-zero `Allocated` value (WizTree marker) means the file consumes no additional space — index it, count it once in sums.
 
+### 5.1 Ingest notes (S1 findings)
+
+Verified against the format contract and exercised by the committed fixtures
+(`tests/fixtures/data/`) plus the generator (`tests/fixtures/gen.py`):
+
+- **Columns.** `File Name, Size, Allocated, Modified, Attributes, Files, Folders`.
+  Parsed **by column name**, case-insensitively, in any order; extra columns and
+  missing optional columns are tolerated (`Allocated`/`Modified`/`Attributes`/
+  `Files`/`Folders` are all optional; `File Name` and `Size` are required and
+  their absence is a hard error). A duplicate mapped column takes the first
+  occurrence; unknown columns are ignored.
+- **Folder rows** end with a trailing backslash and carry *descendant totals*
+  (`Size`/`Allocated`). They are indexed verbatim and never summed with their
+  children: every byte total in `RunStats`/`db.index_summary()` comes from file
+  rows only. `Files`/`Folders` cells are informational and not stored.
+- **Storage normalization.** Folder paths are stored without the trailing
+  separator (the marker survives as `is_dir`), except drive roots which keep it
+  (`C:\` — a bare `C:` means "current directory on C:" on Windows). `name` is
+  the last component (a drive root's name is `C:`), `depth` counts components
+  below the root (root = 0), `ext` is the lower-cased extension without the dot
+  (`''` when a file has none, `NULL` for folders). File rows keep their path
+  exactly as exported.
+- **Timestamps.** `Modified` is `yyyy/MM/dd HH:mm:ss`, zone-less local time.
+  It is stored as an epoch under the documented assumption that the value is
+  UTC, so ordering and age arithmetic are deterministic across machines (the
+  index is not a timezone database; a machine's local zone can be re-applied by
+  later slices if they need to). Empty/invalid cells become `NULL` and are
+  counted (`bad_mtime_rows`).
+- **Hard links.** Leading zero on a *non-zero* `Allocated` text value
+  (`"01048576"`) marks a hard-linked file: the bytes are already accounted for
+  by another entry. `allocated` keeps the parsed value and `hardlink_flag = 1`;
+  roll-ups (`unique_allocated_bytes`) count the payload once, while the raw
+  `allocated_bytes` total includes every copy. `"0"` is a genuine zero, not a
+  marker; folder rows are never flagged.
+- **Drive capacity rows — finding:** the seven-column export carries **no
+  capacity data** and no capacity row is part of the contract. Ingest therefore
+  treats summary rows as optional: a row named exactly like a drive spec
+  without the trailing separator (`C:`) is never a tree entry and is counted as
+  a capacity row; so is a `C:\` row whose `Modified`/`Attributes`/`Files`/
+  `Folders` cells are *all* empty (only checked when those columns exist). Such
+  rows are recorded in `drives` **only when they carry free-space data** (an
+  explicit `Free`-style column, with capacity taken from a `Capacity`/`Total`
+  column or the row's `Size`), otherwise they are skipped and reported in
+  `RunStats.capacity_rows`. Consequence: **`drives` is usually empty after an
+  import** — later slices must not assume capacity is known from the export and
+  take free-space from the live system (plan targets, S5/S8).
+- **Encoding.** UTF-8 (BOM tolerated, `utf-8-sig`) and UTF-16 (BOM'd or — via a
+  NUL-heavy heuristic — BOM-less little/big endian). Detected once from a 4 KiB
+  sample, then the file is streamed; the chosen encoding is recorded in `meta`
+  (`ingest.encoding`).
+- **Mechanics.** One transaction for the whole load, `executemany` batches of
+  50 000 rows, `PRAGMA defer_foreign_keys=ON` during the load, `WAL` journal,
+  parent chain reconstructed from a depth-first ancestor stack (an index lookup
+  is the fallback for out-of-order rows). Memory stays flat regardless of the
+  export size; measured ~24k rows/s (≈1.4M rows/min) in the dev container on a
+  44 MB / 284k-row export, peak RSS 122 MB.
+- **Tolerances (all counted, never fatal).** blank lines, short rows (missing
+  cells become `""`/`NULL`), long rows (extra cells ignored), empty name cells,
+  duplicate paths (`INSERT OR IGNORE`, counted), rows whose parent folder was
+  never exported (`parent_id NULL`, `orphan_rows`), non-numeric size cells
+  (stored as 0, `bad_number_rows`). Everything else fails loud: ingest refuses a
+  non-empty index unless `--replace` is passed, and after every load the parsed
+  counters are reconciled against the index (`IngestError` on mismatch).
+- **Run provenance** lands in `meta` (`source.csv`, `source.csv_bytes`,
+  `source.exported`, `source.machine`, `ingest.*` counters/bytes), giving later
+  slices the dataset identity they need for caching and dataset locking.
+
 ## 6. Rule packs (TOML)
 
 TOML via stdlib `tomllib` (comments allowed, no extra dep). Built-ins in `spacesage/rules/`; user overrides in `~/.config/spacesage/rules/` shadow by `id`.
