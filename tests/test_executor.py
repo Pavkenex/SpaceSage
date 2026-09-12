@@ -1057,6 +1057,71 @@ def test_link_and_verify_labels_are_human_readable() -> None:
     assert verify_label("not-run") == "not run"
 
 
+def test_apply_reports_every_action_as_it_finishes(tmp_path: Path) -> None:
+    """``on_op`` is the UI's progress bar: 1-based, in plan order, once per op."""
+    result = gen_executor.scenario(tmp_path)
+    seen: list[tuple[int, int, str]] = []
+    report = executor.apply_plan(
+        result.plan,
+        result.manifest("a1", "a2"),
+        execute=True,
+        journal=result.journal_path,
+        quarantine_root=result.quarantine,
+        on_op=lambda op, index, total: seen.append((index, total, op.action_id)),
+    )
+    assert report.ok(), report.to_dict()
+    assert seen == [(1, 2, "a1"), (2, 2, "a2")]
+
+
+def test_undo_reverses_only_the_named_operations(tmp_path: Path) -> None:
+    """``only`` is a selection: the rest of the journal stays pending."""
+    result = gen_executor.scenario(tmp_path)
+    executor.apply_plan(
+        result.plan,
+        result.manifest("a1", "a2"),
+        execute=True,
+        journal=result.journal_path,
+        quarantine_root=result.quarantine,
+    )
+    journal = executor.read_journal(result.journal_path)
+    pending = journal.pending()
+    assert len(pending) >= 2  # a1's quarantine plus a2's move and its link
+
+    seen: list[tuple[int, int, str]] = []
+    report = executor.undo_journal(
+        result.journal_path,
+        only=[pending[-1].seq],
+        on_op=lambda op, index, total: seen.append((index, total, op.outcome)),
+    )
+    assert report.ok(), report.to_dict()
+    assert [op.op_ref for op in report.ops] == [pending[-1].seq]
+    assert seen == [(1, 1, "done")]
+
+    after = executor.read_journal(result.journal_path)
+    assert [op.seq for op in after.pending()] == [op.seq for op in pending[:-1]]
+    assert report.already_undone == 0
+
+
+def test_undo_reports_already_reversed_ids_it_was_asked_for(tmp_path: Path) -> None:
+    """Asking twice for the same operation is not an error -- it is reported."""
+    result = gen_executor.scenario(tmp_path)
+    executor.apply_plan(
+        result.plan,
+        result.manifest("a1"),
+        execute=True,
+        journal=result.journal_path,
+        quarantine_root=result.quarantine,
+    )
+    journal = executor.read_journal(result.journal_path)
+    seq = journal.pending()[0].seq
+    first = executor.undo_journal(result.journal_path, only=[seq])
+    assert [op.op_ref for op in first.ops] == [seq]
+
+    second = executor.undo_journal(result.journal_path, only=[seq])
+    assert second.ops == ()
+    assert second.already_undone == 1
+
+
 @POSIX_ONLY
 def test_digest_never_reads_through_a_symlink(tmp_path: Path) -> None:
     outside = gen_executor.write_file(tmp_path / "outside.bin", 32)

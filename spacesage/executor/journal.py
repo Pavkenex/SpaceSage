@@ -38,7 +38,7 @@ from .backend import (
     reparse_kind,
     verify,
 )
-from .report import UndoResult, UndoStep
+from .report import OnUndoOp, UndoResult, UndoStep
 
 JOURNAL_SCHEMA = "spacesage.journal/v1"
 """Schema string of every record in the file."""
@@ -661,14 +661,21 @@ def undo(
     backend: Backend,
     content_limit: int = DEFAULT_CONTENT_LIMIT,
     writer: JournalWriter | None = None,
+    only: Sequence[int] | None = None,
+    on_op: OnUndoOp | None = None,
 ) -> tuple[UndoResult, ...]:
     """Reverse every pending operation, newest first, verifying each payload.
 
     Returns one :class:`~spacesage.executor.report.UndoResult` per operation, in
     the order they were reversed.  The run is journaled as it happens, so a crash
     mid-undo leaves the remaining operations pending for the next attempt.
+    ``only`` reverses the named ``seq`` numbers alone (a screen's selection);
+    ``on_op`` reports ``(result, index, total)`` after each reversal.
     """
     pending = journal.pending()
+    if only is not None:
+        wanted = {int(seq) for seq in only}
+        pending = tuple(op for op in pending if op.seq in wanted)
     if not pending:
         return ()
     active = JournalWriter(journal.path) if writer is None else writer
@@ -681,10 +688,11 @@ def undo(
         manifest=last_run.manifest if last_run is not None else None,
     )
     results: list[UndoResult] = []
-    for op in pending:
-        results.append(
-            _reverse(op, backend=backend, writer=active, run=run, content_limit=content_limit)
-        )
+    for index, op in enumerate(pending, start=1):
+        result = _reverse(op, backend=backend, writer=active, run=run, content_limit=content_limit)
+        results.append(result)
+        if on_op is not None:
+            on_op(result, index, len(pending))
     counts: dict[str, int] = dict.fromkeys(("done", "skipped", "blocked", "failed"), 0)
     for result in results:
         counts[result.outcome] = counts.get(result.outcome, 0) + 1

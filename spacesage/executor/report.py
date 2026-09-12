@@ -30,7 +30,7 @@ An **undo** op is one of ``done`` / ``skipped`` / ``blocked`` / ``failed``;
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from spacesage.stats import format_bytes
@@ -394,3 +394,10 @@ class UndoReport:
             f"{format_bytes(self.restored_bytes())} restored"
         )
         return "\n".join(lines) + "\n"
+
+
+OnOp = Callable[[OpResult, int, int], None]
+"""``(result, index, total)`` after each action of an apply run."""
+
+OnUndoOp = Callable[[UndoResult, int, int], None]
+"""``(result, index, total)`` after each reversal of an undo run."""

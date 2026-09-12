@@ -88,6 +88,8 @@ from .report import (
     APPLY_OUTCOMES,
     UNDO_OUTCOMES,
     ApplyReport,
+    OnOp,
+    OnUndoOp,
     OpResult,
     Step,
     UndoReport,
@@ -114,6 +116,8 @@ __all__ = [
     "JournalOp",
     "JournalWriter",
     "Manifest",
+    "OnOp",
+    "OnUndoOp",
     "OpResult",
     "Step",
     "UndoReport",
@@ -1004,12 +1008,17 @@ def apply_plan(
     content_limit: int = DEFAULT_CONTENT_LIMIT,
     plan_path: str | os.PathLike[str] | None = None,
     manifest_path: str | os.PathLike[str] | None = None,
+    on_op: OnOp | None = None,
 ) -> ApplyReport:
     """Apply the approved subset of ``plan`` (a dry run unless ``execute``).
 
     Refuses (raises :class:`ExecutorError`) when the plan is invalid, when the
     manifest does not bind to this very plan, when it names action ids the plan
     does not have, or when an execution run has nowhere to journal to.
+
+    ``on_op`` is called after every action with ``(index, total, result)``
+    (1-based), so a UI can show live per-item progress without the executor
+    knowing anything about it.  It runs on the calling thread, between ops.
     """
     started = now_iso()
     clock = time.monotonic()
@@ -1074,7 +1083,12 @@ def apply_plan(
         quarantine_root=root,
         plan_id=plan_id,
     )
-    ops = tuple(runner.run(item) for item in resolved)
+    ops: list[OpResult] = []
+    for index, item in enumerate(resolved, start=1):
+        result = runner.run(item)
+        ops.append(result)
+        if on_op is not None:
+            on_op(result, index, len(resolved))
     if writer is not None:
         writer.end_run(
             run=run,
@@ -1098,7 +1112,7 @@ def apply_plan(
         manifest_path=str(manifest_path) if manifest_path is not None else None,
         journal_path=str(journal_target) if journal_target is not None else None,
         quarantine_root=root,
-        ops=ops,
+        ops=tuple(ops),
         total_actions=len(actions),
     )
 
@@ -1130,17 +1144,33 @@ def undo_journal(
     *,
     backend: Backend | None = None,
     content_limit: int = DEFAULT_CONTENT_LIMIT,
+    only: Sequence[int] | None = None,
+    on_op: OnUndoOp | None = None,
 ) -> UndoReport:
     """Reverse every pending operation of a journal, newest first, verifying each.
 
     Running it twice is safe: the second run finds nothing pending and says so.
+    ``only`` restricts the run to the journal ``seq`` numbers named (the
+    selection a UI offers); ids that are not pending any more are simply not
+    reversed.  ``on_op`` is called after every reversal with
+    ``(result, index, total)``, so a screen can show live per-item progress.
     """
     started = now_iso()
     clock = time.monotonic()
     be = backend if backend is not None else current_backend()
     parsed = read_journal(journal)
-    already = sum(1 for op in parsed.ops if op.inverse and parsed.resolved(op) is not None)
-    results = reverse_pending(parsed, backend=be, content_limit=content_limit)
+    wanted = None if only is None else {int(seq) for seq in only}
+    pending = {op.seq for op in parsed.pending()}
+    already = sum(
+        1
+        for op in parsed.ops
+        if op.inverse and parsed.resolved(op) is not None and (wanted is None or op.seq in wanted)
+    )
+    if wanted is not None:
+        already += sum(1 for seq in wanted if seq not in pending and parsed.by_seq(seq) is None)
+    results = reverse_pending(
+        parsed, backend=be, content_limit=content_limit, only=only, on_op=on_op
+    )
     return UndoReport(
         journal_path=str(parsed.path),
         backend=be.name,
