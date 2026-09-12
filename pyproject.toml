@@ -1,0 +1,85 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "spacesage"
+dynamic = ["version"]
+description = "Turn a WizTree export into a safety-gated course of action for a full disk."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["disk-space", "cleanup", "wiztree", "storage", "analysis"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Systems Administration",
+    "Typing :: Typed",
+]
+# The engine is stdlib-only by design (docs/design.md section 4). Never add a
+# runtime dependency here: the desktop app's PySide6 arrives as the [gui] extra.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.11",
+    "pytest>=8.0",
+    "pyyaml>=6.0",
+    "ruff>=0.9",
+]
+build = [
+    "pyinstaller>=6.0",
+]
+
+[dependency-groups]
+# uv installs the `dev` group by default on `uv run` / `uv sync`, so the dev
+# tooling needs no extra flags there. `pip install -e '.[dev]'` uses the extra
+# above instead. Keep the two lists in sync.
+dev = [
+    "mypy>=1.11",
+    "pytest>=8.0",
+    "pyyaml>=6.0",
+    "ruff>=0.9",
+]
+
+[project.scripts]
+spacesage = "spacesage.cli:main"
+
+[tool.hatch.version]
+# Single source of truth for the version: spacesage/__init__.py
+path = "spacesage/__init__.py"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["spacesage", "tests"]
+# Only Python sources are linted/formatted: docs (Markdown) must never affect
+# the format gate, and ruff 0.16 would otherwise treat Markdown as formattable.
+include = ["*.py", "*.pyi"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["spacesage"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["spacesage"]
+strict = true
+warn_unreachable = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-config", "--strict-markers"]
+markers = [
+    "slow: long-running tests (run with -m slow, skip with -m 'not slow')",
+]

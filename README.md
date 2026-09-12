@@ -27,6 +27,22 @@ It is a **desktop application** (PySide6/Qt) — a real windowed program, not a 
 - [`docs/research/ai-and-alternatives.md`](docs/research/ai-and-alternatives.md) — research: LLM vs. rules vs. other systems
 - [`docs/adr/`](docs/adr/) — architecture decision records
 
+## Development
+
+Requires Python ≥ 3.11 and [uv](https://docs.astral.sh/uv/). The engine is stdlib-only; dev tooling lives in the `[dev]` extra (installed by default via `[tool.uv] default-extras`).
+
+```sh
+uv venv .venv
+uv pip install -e '.[dev]'     # or simply `uv sync`
+
+uv run pytest                  # tests (`-m 'not slow'` skips the slow ones)
+uv run ruff check .            # lint
+uv run ruff format --check .   # formatting
+uv run mypy spacesage          # types (strict)
+```
+
+The internal CLI (development/automation only) runs as `uv run python -m spacesage --version`, or via the installed `spacesage` console script. GUI dependencies arrive with the desktop-app slices — see [`docs/slices.md`](docs/slices.md) and [`docs/dev-environment.md`](docs/dev-environment.md).
+
 ## License
 
 MIT. Not affiliated with WizTree / Antibody Software.
