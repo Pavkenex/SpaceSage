@@ -56,10 +56,12 @@ spacesage/
   models.py           # dataclasses: Entry, Drive, Action, Plan, …
   report.py           # Markdown/HTML export documents (share-friendly, optional)
   executor/
-    __init__.py       # platform dispatch
+    __init__.py       # dispatcher: manifest, resolution, re-validation, apply
+    backend.py        # digests, guards, the platform protocol
+    report.py         # apply/undo result types and their rendering
     journal.py        # JSONL journal + undo
-    win.py            # robocopy / mklink / quarantine backend
-    posix.py          # shutil / XDG-trash parity backend
+    win.py            # robocopy / mklink / compact backend
+    posix.py          # shutil / symlink / XDG-quarantine parity backend
   ai/
     client.py         # OpenAI-compatible /chat/completions (stdlib urllib)
     prompts.py        # use-case prompts + output JSON schemas
@@ -507,6 +509,82 @@ decisions that became part of the contract:
 - **Journal:** append-only JSONL (`journal.jsonl`): op, before, after, result, verification. `spacesage undo <journal>` reverses in reverse order and verifies.
 - **Long paths:** `\\?\`-prefixing on Windows; `MAX_PATH` handling tests.
 - **Re-validation** right before every op, and again after (result verification).
+
+### 8.1 Executor notes (S7 findings)
+
+`spacesage/executor/` implements that design. The decisions that are now part of
+the contract:
+
+- **The manifest is the gate.** `approved.json` is
+  `{schema: "spacesage.approved/v1", plan_id, created, approved: [a1, a2, …],
+  rejected: [], note}`; ids are `a<n>`, deduplicated, and the approval is bound to
+  the plan's own `plan_id`. A manifest for another plan, an id the plan does not
+  have, or a plan that does not validate is refused **before a single op is
+  resolved** — there is no "repair" path and no partial run.
+- **Dry run is the default and touches nothing.** `spacesage apply` without
+  `--execute` resolves every approved action into the exact operation it would
+  perform (quarantine destination, move destination, the link that follows) and
+  stops: no quarantine directory, no journal (unless `--journal` names one, which
+  then records only a `dry-run` header with what was previewed).
+- **Quarantine layout.** `<volume root>/_spacesage_quarantine/<plan token>/<volume
+  label>/<path components>`. The token is the first 16 hex characters of the plan
+  id — the full id lives in the store manifest and in every journal record,
+  because `sha256:` is not a legal path component on Windows. Windows puts the
+  store on the source's own volume (`C:\_spacesage_quarantine`), so a quarantine
+  stays a `rename`; POSIX follows the XDG convention (the home volume goes to
+  `$XDG_DATA_HOME/spacesage/quarantine`, any other volume to
+  `<mount point>/.spacesage_quarantine-<uid>`, chosen by walking `st_dev`).
+  `--quarantine DIR` overrides both. Every store gets a `manifest.json`
+  (`spacesage.quarantine/v1`) listing each payload with its size and digest, so
+  the store is self-describing when the purge step arrives.
+- **Re-validation is a second look, per op, immediately before it runs.**
+  *skipped* when the source is gone or locked (or the destination already
+  exists); *refused* when the path is no longer absolute, contains a wildcard, is
+  a volume root / system directory / profile root / home directory / quarantine
+  store, has become a reparse point, or carries the report-only tier; a hard link
+  that would cross volumes is refused; `--within ROOT` confines a run to named
+  roots. Skips and refusals are reported **and journaled** — "this approved
+  action was deliberately left alone" is a decision worth auditing.
+- **Verification is a digest, not a hope.** Every payload gets a
+  location-independent digest before and after the operation: `tree_sha256` over
+  every entry (relative path, kind, size, link target) plus a full
+  `content_sha256` for payloads up to 256 MiB — above that the digest says
+  "unverified (too large to hash)" instead of pretending. A move that arrives with
+  different bytes, or that leaves its source behind, is a *failure*: the report
+  says the payload is at the destination and undo can move it back.
+- **The journal is written in two phases.** An `op` record with `phase: "start"`
+  (the source, the destination and the pre-move digest) is fsynced **before** the
+  primitive runs; the `phase: "end"` record (outcome, verification, notes, the
+  external command that ran) lands right after. A start record without its end
+  record means "this may or may not have happened" — undo settles that against the
+  live filesystem instead of guessing, which is what makes an interrupted run
+  recoverable.
+- **Undo reverses in reverse order, verifying.** The link goes before the move
+  that created it, the move before the quarantine it followed, and every payload
+  is compared with the digest the journal recorded on the way in. Undo is itself
+  journaled (run `undo`, one record per reversal), so a second `spacesage undo`
+  reports "nothing to undo" rather than moving things twice. An operation whose
+  original path is occupied again is **blocked** and retried on the next run
+  (never clobbered); one whose payload was purged is skipped with that reason.
+- **Platform parity, stated honestly.** Windows moves run
+  `robocopy /MOVE /E /COPYALL` (retried with `/COPY:DAT` when security copying
+  needs backup rights, falling back to `shutil.move` when robocopy cannot do it at
+  all), directory links are `mklink /J` junctions (no elevation), file links are
+  symlinks — and when the process has neither elevation nor Developer Mode the
+  **whole action is skipped before the move**, so a path can never end up
+  dangling. Hard links are `os.link`; compression is `compact.exe` /c, its undo
+  `/u`. POSIX is the reference backend: `shutil.move` (a rename on one volume,
+  copy + delete across two, and the report says which), `os.symlink` (a `JUNCTION`
+  plan becomes a directory symlink, with a note saying why), `os.link`, an
+  advisory `flock` probe for "in use", and NTFS compression refused with a reason
+  rather than approximated.
+- **The CLI grew two verbs.** `spacesage apply PLAN --approve APPROVED
+  [--execute] [--journal FILE] [--quarantine DIR] [--within ROOT]… [--json]` and
+  `spacesage undo JOURNAL [--json]`. Both print a readable report (`spacesage
+  apply` shows the resolved per-op plan; `undo` shows the reversals) or the JSON
+  twin (`spacesage.executor/v1` / `spacesage.undo/v1`), and both exit non-zero
+  when an operation failed or was refused — skips are reported but are not
+  failures. The journal defaults to `spacesage.journal.jsonl` next to the plan.
 
 ## 9. Desktop app — screens & flows
 

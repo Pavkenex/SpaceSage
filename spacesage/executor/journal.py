@@ -667,10 +667,13 @@ def undo(
     if not pending:
         return ()
     active = JournalWriter(journal.path) if writer is None else writer
+    last_run = journal.runs[-1] if journal.runs else None
     run = active.start_run(
         mode="undo",
         backend=backend.name,
-        plan=journal.runs[-1].plan if journal.runs else None,
+        plan_id=last_run.plan_id if last_run is not None else None,
+        plan=last_run.plan if last_run is not None else None,
+        manifest=last_run.manifest if last_run is not None else None,
     )
     results: list[UndoResult] = []
     for op in pending:
