@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from spacesage import __version__, db, rules, stats
+from spacesage import __version__, candidates, db, rules, stats
 from spacesage.ingest import IngestError, IngestProgress, RunStats, ingest_csv
 
 PROG = "spacesage"
@@ -160,7 +160,97 @@ def build_parser() -> argparse.ArgumentParser:
         help="also rebuild the derived categories table (writes to the index)",
     )
     classify_parser.set_defaults(handler=_run_classify)
+
+    candidates_parser = subparsers.add_parser(
+        "candidates",
+        help="rank the opportunities per action kind (delete/move/stale/dupes/app)",
+        description=(
+            "Turn the classifier's verdicts into ranked candidate lists, biggest "
+            "estimated win first: entries to quarantine, data to relocate, big "
+            "cold entries to review, weak duplicate clusters and the largest app "
+            "footprints. Every candidate carries its tier, confidence, the "
+            "reason, and the score factors behind its rank. Read-only."
+        ),
+    )
+    candidates_parser.add_argument(
+        "--db",
+        metavar="PATH",
+        default=db.DEFAULT_DB_NAME,
+        help=("index database file, or a directory (then PATH/spacesage.db); default: %(default)s"),
+    )
+    candidates_parser.add_argument(
+        "--rules",
+        metavar="DIR",
+        default=None,
+        help="user rule-pack directory to load instead of ~/.config/spacesage/rules",
+    )
+    candidates_parser.add_argument(
+        "--kind",
+        action="append",
+        type=_kind_list,
+        metavar="KIND",
+        help=(
+            f"only this candidate kind; repeat or comma-separate "
+            f"({', '.join(candidates.KINDS)}); default: all. Kinds left out are "
+            "not generated, so they cannot claim paths from the ones listed"
+        ),
+    )
+    candidates_parser.add_argument(
+        "--min-size",
+        type=_size_arg,
+        default=candidates.DEFAULT_MIN_SIZE,
+        metavar="SIZE",
+        help="ignore entries smaller than this (bytes or '100 MiB'); default: %(default)s",
+    )
+    candidates_parser.add_argument(
+        "--top",
+        type=int,
+        default=candidates.DEFAULT_TOP,
+        metavar="N",
+        help="candidates listed per kind (0 = no limit); default: %(default)s",
+    )
+    candidates_parser.add_argument(
+        "--stale-after-days",
+        type=float,
+        default=candidates.DEFAULT_STALE_DAYS,
+        metavar="DAYS",
+        help="age at which a big entry counts as stale; default: %(default)s",
+    )
+    candidates_parser.add_argument(
+        "--dupes-min-copies",
+        type=int,
+        default=candidates.DEFAULT_DUPES_MIN_COPIES,
+        metavar="N",
+        help="same-name/same-size group size that counts as duplicates; default: %(default)s",
+    )
+    candidates_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the complete report as JSON",
+    )
+    candidates_parser.set_defaults(handler=_run_candidates)
     return parser
+
+
+def _kind_list(value: str) -> tuple[str, ...]:
+    """Parse a ``--kind`` value: one kind, or a comma-separated list of them."""
+    parts = tuple(part.strip() for part in value.split(",") if part.strip())
+    if not parts:
+        raise argparse.ArgumentTypeError("expected at least one kind")
+    unknown = [part for part in parts if part not in candidates.KINDS]
+    if unknown:
+        raise argparse.ArgumentTypeError(
+            f"unknown kind(s) {', '.join(unknown)}; pick from {', '.join(candidates.KINDS)}"
+        )
+    return parts
+
+
+def _size_arg(value: str) -> int:
+    """Parse a ``--min-size`` value with :func:`spacesage.rules.parse_size`."""
+    try:
+        return rules.parse_size(value)
+    except rules.RulesError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def _run_ingest(args: argparse.Namespace) -> int:
@@ -298,6 +388,55 @@ def _run_classify(args: argparse.Namespace) -> int:
             return 1
         print(
             rules.render_json(report) if args.json else rules.render_text(report),
+            end="",
+        )
+        return 0
+    finally:
+        conn.close()
+
+
+def _run_candidates(args: argparse.Namespace) -> int:
+    try:
+        ruleset = _load_ruleset(args)
+    except rules.RulesError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    target = db.resolve_db_path(args.db)
+    if not target.is_file():
+        print(
+            f"error: no index at {target}; ingest a WizTree export first "
+            f"(spacesage ingest <csv> --db {args.db})",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        conn = db.open_db(target)
+    except (db.SchemaError, sqlite3.Error) as exc:
+        print(f"error: cannot open the index at {target}: {exc}", file=sys.stderr)
+        return 1
+    try:
+        selected = tuple(kind for group in (args.kind or ()) for kind in group) or candidates.KINDS
+        try:
+            # One reference point for the whole invocation: age filters and the
+            # printed recency factors must agree.
+            moment = time.time()
+            report = candidates.candidate_report(
+                conn,
+                ruleset,
+                kinds=selected,
+                min_size=args.min_size,
+                top=args.top,
+                now=moment,
+                stale_after_days=args.stale_after_days,
+                dupes_min_copies=args.dupes_min_copies,
+                db_path=str(target),
+            )
+        except (candidates.CandidatesError, rules.RulesError, db.SchemaError, sqlite3.Error) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            candidates.render_json(report) if args.json else candidates.render_text(report),
             end="",
         )
         return 0

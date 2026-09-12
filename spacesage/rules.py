@@ -438,6 +438,13 @@ class Classification:
     pack: str | None = None
     native: str | None = None
     hardlink: bool = False
+    mtime: int | None = None
+    """The entry's ``Modified`` epoch (``None`` when the export had none)."""
+
+    @property
+    def matched(self) -> bool:
+        """True when a rule produced this verdict (``unknown`` when it did not)."""
+        return self.rule_id is not None
 
 
 # --------------------------------------------------------------------------- #
@@ -878,6 +885,7 @@ class RuleSet:
                 confidence=0.0,
                 rationale=UNKNOWN_RATIONALE,
                 hardlink=hardlink,
+                mtime=entry.mtime,
             )
         return Classification(
             entry_id=entry_id,
@@ -893,6 +901,7 @@ class RuleSet:
             pack=rule.pack,
             native=rule.native,
             hardlink=hardlink,
+            mtime=entry.mtime,
         )
 
     @property
