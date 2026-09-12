@@ -16,7 +16,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings
 
-from spacesage import db
+from spacesage import db, planning
 
 APP_DIR_NAME = "spacesage"
 """Folder name under the platform's data directory."""
@@ -52,6 +52,11 @@ def data_dir(env: Mapping[str, str] | None = None) -> Path:
 def index_path(env: Mapping[str, str] | None = None) -> Path:
     """The app's index file (``<data dir>/spacesage.db``)."""
     return db.resolve_db_path(data_dir(env))
+
+
+def plans_dir(env: Mapping[str, str] | None = None) -> Path:
+    """Where the app keeps one workspace per plan (``<data dir>/plans``)."""
+    return data_dir(env) / planning.PLANS_DIRNAME
 
 
 def ensure_data_dir(env: Mapping[str, str] | None = None) -> Path:
@@ -146,3 +151,22 @@ class Settings:
     def set_last_db(self, path: str) -> None:
         """Persist the last index path."""
         self._set("last_db", path)
+
+    def quarantine_dir(self, default: str = "") -> str:
+        """Folder quarantined payloads go to (``""`` = the engine picks per volume)."""
+        return str(self._get("quarantine_dir", default))
+
+    def set_quarantine_dir(self, path: str) -> None:
+        """Persist the quarantine location (empty string restores the default)."""
+        self._set("quarantine_dir", path)
+
+    def plan_links(self, default: bool = True) -> bool:
+        """Whether planned moves keep the original path working (a link back)."""
+        stored = self._get("plan_links", default)
+        if isinstance(stored, bool):
+            return stored
+        return str(stored).strip().lower() not in {"false", "0", "no", ""}
+
+    def set_plan_links(self, links: bool) -> None:
+        """Persist the link-back preference."""
+        self._set("plan_links", bool(links))

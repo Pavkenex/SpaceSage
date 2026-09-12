@@ -377,6 +377,25 @@ QPushButton#Danger {
     border: 1px solid $danger;
     color: $overlay;
 }
+QPushButton#Danger:hover { background: $danger; border-color: $text; }
+QPushButton#Danger:disabled { background: $sunken; border-color: $border; color: $faint; }
+
+/* ---- segmented switch (one page, several views) ----------------------- */
+#Segmented {
+    background: $sunken;
+    border: 1px solid $border;
+    border-radius: ${radius_sm}px;
+}
+QPushButton#Segment {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: ${radius_sm}px;
+    color: $muted;
+    padding: 4px ${space_md}px;
+}
+QPushButton#Segment:hover { color: $text; background: $hover; }
+QPushButton#Segment:checked { background: $raised; border-color: $border_strong; color: $text; }
+QPushButton#Segment:focus { border-color: $focus; }
 
 /* ---- inputs ---------------------------------------------------------- */
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {

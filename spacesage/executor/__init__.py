@@ -125,6 +125,7 @@ __all__ = [
     "apply_plan",
     "current_backend",
     "default_journal_path",
+    "link_label",
     "load_manifest",
     "load_plan",
     "make_manifest",

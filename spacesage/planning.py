@@ -35,7 +35,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from spacesage import candidates, executor, opportunities, planner, rules, stats
+from spacesage import candidates, db, executor, opportunities, planner, rules, stats
 from spacesage.executor import backend
 
 PLANS_DIRNAME = "plans"
@@ -784,6 +784,93 @@ def execute(
         manifest_path=workspace.manifest_path,
         on_op=on_op,
     )
+
+
+# --------------------------------------------------------------------------- #
+# The session: one draft and the workspace it lives in
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class PlanSession:
+    """A draft plus the workspace its plan and approval are persisted in.
+
+    Every step after drafting goes through here, so the two can never drift
+    apart: the approval is written into the same workspace the plan came from,
+    and the executor is handed that workspace's paths.
+    """
+
+    draft: PlanDraft
+    workspace: PlanWorkspace
+
+    @property
+    def plan_id(self) -> str:
+        """The plan's own id."""
+        return self.draft.plan_id
+
+    @property
+    def plan(self) -> planner.Plan:
+        """The composed plan."""
+        return self.draft.plan
+
+    def approve(self, approved: Sequence[str], *, rejected: Sequence[str] = ()) -> Path:
+        """Persist the approved/rejected sets (the manifest on disk follows)."""
+        return save_approval(self.workspace, self.draft, approved, rejected=rejected)
+
+    def manifest(self) -> executor.Manifest | None:
+        """The approval currently on disk (``None`` before the first write)."""
+        return load_approval(self.workspace)
+
+    def preview(
+        self,
+        approved: Sequence[str],
+        *,
+        quarantine_root: str | os.PathLike[str] | None = None,
+        within: Sequence[str] = (),
+    ) -> executor.ApplyReport:
+        """Dry run of the approved subset (what the preview dialog renders)."""
+        return preview(self.draft, approved, quarantine_root=quarantine_root, within=within)
+
+    def execute(
+        self,
+        approved: Sequence[str],
+        *,
+        quarantine_root: str | os.PathLike[str] | None = None,
+        within: Sequence[str] = (),
+        on_op: executor.OnOp | None = None,
+    ) -> executor.ApplyReport:
+        """Execute the approved subset, journaled into this workspace."""
+        return execute(
+            self.draft,
+            self.workspace,
+            approved,
+            quarantine_root=quarantine_root,
+            within=within,
+            on_op=on_op,
+        )
+
+
+def open_session(
+    db_path: str | os.PathLike[str],
+    ruleset: rules.RuleSet,
+    request: PlanRequest,
+    *,
+    root: str | os.PathLike[str],
+    quarantine_root: str | os.PathLike[str] | None = None,
+) -> PlanSession:
+    """Draft a selection against an index and persist its workspace.
+
+    The one call the app makes when the user presses *Build plan*: it opens the
+    index (read-only), composes the plan for exactly the checked rows, resolves
+    what every action would do, and writes ``plan.json`` + ``approved.json``
+    into ``root``.  Nothing on the analysed drives is touched.
+    """
+    conn = db.open_db(Path(db_path))
+    try:
+        draft = draft_plan(conn, ruleset, request, quarantine_root=quarantine_root)
+    finally:
+        conn.close()
+    return PlanSession(draft=draft, workspace=write_draft(draft, root))
 
 
 # --------------------------------------------------------------------------- #
