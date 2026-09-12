@@ -173,6 +173,15 @@ def test_a_unique_size_is_never_hashed(tmp_path: Path) -> None:
     assert report.stats.full_reads == 2
 
 
+def test_a_single_string_root_is_accepted(tmp_path: Path) -> None:
+    tree = plant(tmp_path)
+    report = deepscan.scan(str(tree.root), now=NOW, min_size=0)
+    assert report.roots == (str(tree.root),)
+    assert group_of(report, tree.keep) is not None
+    as_path = deepscan.scan(tree.root, now=NOW, min_size=0)
+    assert as_path.roots == report.roots
+
+
 def test_empty_directory_is_a_clean_scan(tmp_path: Path) -> None:
     root = tmp_path / "empty"
     root.mkdir()
