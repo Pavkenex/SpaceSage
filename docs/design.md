@@ -83,7 +83,7 @@ tests/
 - `drives(name, fs_type, capacity_bytes, free_bytes)` — from capacity rows when present.
 - `entries(id, path, name, parent_id, is_dir, size, allocated, mtime, attrs, hardlink_flag, depth, ext)` — both file and folder rows; parsed **by column name**; extra/new columns tolerated.
 - Indexes on `size DESC`, `parent_id`, `mtime`, `ext`.
-- Materialized derivations: `dir_sizes` (sums from **file rows only** — folder rows include children and double-count), `categories(entry_id, pack, rule_id, category, tier, confidence, rationale)`, `app_footprints(app, bytes, file_count)`.
+- Materialized derivations: `dir_sizes` (sums from **file rows only** — folder rows include children and double-count), `categories(entry_id, pack, rule_id, category, tier, action, confidence, rationale, native, bytes, is_dir)` (schema v3), `app_footprints(app, bytes, file_count)`.
 
 **Scale:** exports run 1–20M rows. Streaming parse, batched inserts in a single transaction, `PRAGMA journal_mode=WAL`. Target ≥ 1M rows/min on a laptop; memory flat.
 
@@ -215,7 +215,58 @@ native = "pip cache purge"            # optional: preferred native alternative s
 
 Optional matchers: `ext`, `min_size`, `older_than_days`, `name_regex`. First matching rule wins; unmatched entries → `unknown` (never destructive).
 
-Built-in packs (v0.1): `windows.toml`, `dev.toml`, `browsers.toml`, `media.toml`, `games.toml`, `installers.toml`, `misc.toml` — see slices for content scope.
+Built-in packs (v0.1): `windows.toml`, `dev.toml`, `browsers.toml`, `media.toml`, `games.toml`, `installers.toml`, `misc.toml` — see slices for content scope. The authoring guide (matcher reference, ordering, tiers, actions) is [`docs/rules.md`](rules.md).
+
+### 6.1 Rules notes (S3 findings)
+
+`spacesage/rules.py` loads the packs (`tomllib`, stdlib), validates them with
+actionable errors, matches entries and materialises the classification. The
+decisions that became part of the engine:
+
+- **Order is the tool.** Packs carry `[pack] order` (built-ins use 10…90) and
+  are sorted by `(order, pack id)` inside their section; **user packs are tried
+  before built-ins**, so a user rule can carve an exception out of a broad
+  built-in pattern, and a user rule with the same `id` **shadows** the built-in
+  one in place. Within a pack, rules are tried in document order.
+- **Globs.** `*`/`?` never cross a separator, `**` does, a leading `**/`
+  matches zero or more components and a trailing `/**` also matches the folder
+  itself (so one rule covers a folder and its subtree). Both separators are
+  accepted everywhere. Windows-style paths (drive letter or UNC — i.e. every
+  WizTree export) match **case-insensitively**, POSIX paths case-sensitively;
+  the same rule decides `name_regex` case handling, so a Windows export behaves
+  like the filesystem it came from, whatever machine analysed it.
+- **Matchers** are AND-ed (`path` and `ext` lists are OR-ed). `min_size`
+  accepts byte counts or `"10 MiB"`-style sizes (binary suffixes); on a folder
+  it compares the file-row subtree size. `older_than_days` never matches an
+  entry whose timestamp is unknown — "no timestamp" is not "old". A rule
+  without any matcher is rejected: no accidental catch-alls.
+- **`KEEP` joins the action vocabulary** (`rules.ACTIONS`): the explicit
+  *No action* with a reason, used by the least-specific catch-alls
+  (`**/Windows/**`, `**/Program Files/**`) so system and app data reads as a
+  deliberate decision instead of "unknown". Unmatched entries still fall back
+  to `unknown` (T3, `REVIEW`, confidence 0.0) — never destructive.
+- **The classifier is per entry, files and folders alike.** Folder rows use the
+  same matchers; byte semantics stay S2's: folder sizes are the file-row
+  subtree (`stats.iter_dir_sizes`, which now also carries each folder row's
+  `name`/`mtime`), and the report's category sizes are file rows, with matched
+  folders shown as context.
+- **Materialisation.** Schema v3 adds `categories` (one row per entry, cascade
+  with the entries, `meta` carries `classify.rules_sha256` — a fingerprint of
+  the effective rules). `spacesage classify` is read-only unless
+  `--materialize` is passed, and `classify_report()` always recomputes from
+  `entries` so the printed numbers can never come from a stale table.
+- **Matching stays fast** at export scale: the rule index files ext-based rules
+  under every extension they accept and pattern-based rules under a literal
+  component each pattern requires (`**/AppData/Local/pip/Cache/**` → `pip`), so
+  per-entry work starts from the components the path actually contains;
+  candidates are then rejected by a component-subset prefilter before any
+  regex runs. A 284k-entry synthetic index (262k files / 22k dirs, deep random
+  tree) classifies in ~4 s (≈69k entries/s) and materialises in ~9 s.
+- **CLI.** `spacesage classify [--db PATH] [--rules DIR] [--list-rules]
+  [--top N] [--json] [--materialize]`; `--list-rules` prints the effective
+  order (no index needed), the report covers matched/unknown totals, T1/T2/T3
+  roll-ups, per-category sizes and the biggest unknown entries (the rule-author
+  worklist).
 
 ## 7. Plan schema (plan.json v1) — the contract
 

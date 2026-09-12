@@ -1,0 +1,106 @@
+# Everything that is not specific to one platform: temp files, logs, backups,
+# cloud-sync folders, and the two catch-alls that close the rule order.
+#
+# The catch-alls are deliberately last: a path under Windows or Program Files
+# that no more specific rule claimed is system/app-owned data, so SpaceSage
+# answers "no action" instead of guessing.  Only "unknown" (no rule at all) is
+# more conservative than these.
+
+[pack]
+id = "misc"
+title = "Temp files, logs, backups and cloud-sync folders"
+order = 60
+
+[[rule]]
+id = "temp-files"
+ext = ["tmp", "temp"]
+category = "temp-files"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.7
+rationale = "Temporary file left behind by an application; nothing references it any more."
+
+[[rule]]
+id = "office-lock-files"
+name_regex = "^~\\$"
+category = "temp-files"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.6
+rationale = "Office lock/owner file (~$name); it is left behind when Word or Excel does not close cleanly."
+
+[[rule]]
+id = "log-files"
+ext = ["log", "log1", "log2"]
+category = "logs"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.8
+rationale = "Log file: append-only history, safe to quarantine once the issue it recorded is resolved."
+
+[[rule]]
+id = "log-directories"
+path = ["**/logs/**"]
+category = "logs"
+tier = "T2"
+action = "REVIEW"
+confidence = 0.5
+rationale = "Folder of logs; check what writes it and whether the history still matters before clearing it."
+
+[[rule]]
+id = "backup-files"
+ext = ["bak", "backup", "old", "orig", "save"]
+category = "backup-copy"
+tier = "T2"
+action = "DELETE_QUARANTINE"
+confidence = 0.6
+rationale = "Backup copy written by an editor or installer (file.bak, file.old); usually stale, but quarantine so it can come back."
+
+[[rule]]
+id = "backup-directories"
+path = ["**/Backup/**", "**/Backups/**", "**/backup-*/**"]
+category = "backup-directory"
+tier = "T3"
+action = "REVIEW"
+confidence = 0.5
+rationale = "Named like a backup; verify what it protects and whether a newer copy exists before removing anything."
+
+[[rule]]
+id = "onedrive"
+path = ["**/OneDrive/**", "**/OneDrive - */**"]
+category = "cloud-sync"
+tier = "T3"
+action = "NATIVE"
+confidence = 0.7
+rationale = "OneDrive folder: free local space with Files On-Demand instead of deleting or moving files out of sync."
+native = "Right-click the folder > Free up space (Files On-Demand)"
+
+[[rule]]
+id = "dropbox"
+path = ["**/Dropbox/**"]
+category = "cloud-sync"
+tier = "T3"
+action = "NATIVE"
+confidence = 0.6
+rationale = "Dropbox folder: use selective sync to keep large folders in the cloud only."
+native = "Dropbox > Preferences > Sync > Selective Sync"
+
+# --- catch-alls (least specific; keep them last) --------------------------- #
+
+[[rule]]
+id = "windows-system"
+path = ["**/Windows/**"]
+category = "windows-system"
+tier = "T3"
+action = "KEEP"
+confidence = 0.6
+rationale = "Windows system data no other rule claimed; SpaceSage leaves it alone rather than guessing."
+
+[[rule]]
+id = "installed-app"
+path = ["**/Program Files/**", "**/Program Files (x86)/**"]
+category = "installed-app"
+tier = "T3"
+action = "KEEP"
+confidence = 0.6
+rationale = "Installed program no other rule claimed; uninstall it through Apps & features instead of deleting files."

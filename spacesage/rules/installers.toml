@@ -1,0 +1,49 @@
+# Installers and download leftovers.
+#
+# Downloaded installers are re-downloadable, but the *right* answer depends on
+# where they live and how old they are: the Downloads folder collects them by
+# design, while an MSI elsewhere may still be needed for repair.
+
+[pack]
+id = "installers"
+title = "Installers and download leftovers"
+order = 50
+
+[[rule]]
+id = "downloads-installer"
+path = ["**/Downloads/**"]
+ext = ["exe", "msi", "msix", "appx", "msp", "bundle", "pkg"]
+older_than_days = 30
+category = "installer"
+tier = "T2"
+action = "DELETE_QUARANTINE"
+confidence = 0.7
+rationale = "Installer downloaded more than a month ago and never removed; re-download it if you still need it."
+
+[[rule]]
+id = "stale-installer"
+ext = ["msi", "msix", "msp"]
+older_than_days = 365
+category = "installer"
+tier = "T2"
+action = "REVIEW"
+confidence = 0.6
+rationale = "Installer older than a year outside Downloads; keep it if a program on this machine may need it to repair or uninstall."
+
+[[rule]]
+id = "download-in-progress"
+ext = ["crdownload", "part", "partial", "download", "opdownload"]
+category = "download-temp"
+tier = "T2"
+action = "REVIEW"
+confidence = 0.5
+rationale = "Partial download; safe to remove once no download is running, but check first."
+
+[[rule]]
+id = "driver-installer-cache"
+path = ["**/NVIDIA/Downloader/**", "**/NVIDIA Corporation/Downloader/**"]
+category = "installer"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.7
+rationale = "Driver packages already installed by NVIDIA's downloader; the driver itself lives elsewhere."

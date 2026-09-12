@@ -655,7 +655,7 @@ def test_derived_tables_follow_the_entries(tmp_path: Path) -> None:
     assert (reloaded.dir_sizes, reloaded.app_footprints) == (4, 1)
 
 
-def test_schema_v1_indexes_migrate_to_v2(tmp_path: Path) -> None:
+def test_schema_v1_indexes_migrate_to_the_current_version(tmp_path: Path) -> None:
     db_path = tmp_path / "legacy.db"
     raw = sqlite3.connect(db_path)
     raw.executescript(db.MIGRATIONS[1])
@@ -664,11 +664,11 @@ def test_schema_v1_indexes_migrate_to_v2(tmp_path: Path) -> None:
     raw.close()
 
     conn = db.open_db(db_path)
-    assert db.schema_version(conn) == db.SCHEMA_VERSION == 2
+    assert db.schema_version(conn) == db.SCHEMA_VERSION == 3
     tables = {
         str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
-    assert {"dir_sizes", "app_footprints"} <= tables
+    assert {"dir_sizes", "app_footprints", "categories"} <= tables
     conn.close()
 
     ingest_csv(DATA_DIR / "app_roots.csv", db_path)
@@ -724,7 +724,7 @@ def test_cli_stats_prints_every_section(tmp_path: Path) -> None:
     result = run_cli("stats", "--db", str(db_path), "--top", "5")
     assert result.returncode == 0, result.stderr
     out = result.stdout
-    assert f"index: {db_path} (schema v2)" in out
+    assert f"index: {db_path} (schema v3)" in out
     assert "totals: 19 dirs, 9 files" in out
     assert "data quality: ok" in out
     assert "top directories by subtree (5 of 19)" in out
@@ -765,7 +765,7 @@ def test_cli_stats_json_report(tmp_path: Path) -> None:
 
     assert payload["schema"] == "spacesage.stats/v1"
     assert payload["index"]["db"] == str(db_path)
-    assert payload["index"]["schema_version"] == 2
+    assert payload["index"]["schema_version"] == 3
     assert payload["totals"]["file_bytes"] == 3_972_000
     assert payload["totals"]["unique_file_bytes"] == 3_972_000
 

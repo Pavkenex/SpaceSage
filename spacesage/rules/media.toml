@@ -1,0 +1,73 @@
+# Personal media and large image files.
+#
+# These are MOVE candidates, never delete candidates: the point is to get them
+# onto a data drive (linked back if an app expects them in place), not to throw
+# them away.  Confidence stays moderate because only the user knows what a file
+# is worth -- the plan is always human-approved.
+#
+# This pack is deliberately the last one: media recognition must never shadow
+# the more specific rules for game libraries, app folders or cloud folders.
+
+[pack]
+id = "media"
+title = "Personal media and image files"
+order = 90
+
+[[rule]]
+id = "media-video"
+ext = [
+    "mp4", "mkv", "avi", "mov", "m4v", "wmv", "webm", "flv", "mpg", "mpeg",
+    "m2ts", "mts", "ts", "vob", "3gp", "rmvb", "ogv",
+]
+category = "media-video"
+tier = "T2"
+action = "MOVE"
+confidence = 0.6
+rationale = "Video file: move it to your data drive to free this one; nothing else uses it in place."
+
+[[rule]]
+id = "media-audio"
+ext = [
+    "flac", "wav", "aiff", "aif", "ape", "alac", "dsf", "dff", "mp3", "m4a",
+    "aac", "ogg", "oga", "opus", "wma", "mid",
+]
+category = "media-audio"
+tier = "T2"
+action = "MOVE"
+confidence = 0.55
+rationale = "Audio file: a natural fit for a music drive; move it out of this one."
+
+[[rule]]
+id = "media-photos"
+ext = [
+    "jpg", "jpeg", "png", "heic", "heif", "raw", "cr2", "cr3", "nef", "arw",
+    "dng", "raf", "orf", "rw2", "tif", "tiff", "bmp",
+]
+category = "media-photos"
+tier = "T2"
+action = "MOVE"
+confidence = 0.5
+rationale = "Photo file: photo libraries grow fast; move it to a data drive (and keep your backup in sync)."
+
+[[rule]]
+id = "disk-images"
+ext = ["iso", "img", "vhd", "vhdx", "vmdk", "qcow2", "wim", "esd", "toast"]
+category = "disk-image"
+tier = "T2"
+action = "REVIEW"
+confidence = 0.5
+rationale = "Disk image (installer, VM disk or backup); keep it if you still need it, move it if you do not."
+
+[[rule]]
+id = "media-libraries"
+path = [
+    "**/Users/*/Videos/**",
+    "**/Users/*/Pictures/**",
+    "**/Users/*/Music/**",
+]
+min_size = "512 MiB"
+category = "media-library"
+tier = "T2"
+action = "MOVE"
+confidence = 0.5
+rationale = "Large personal media folder: move it to a data drive and link it back so apps still find it."

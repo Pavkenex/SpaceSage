@@ -1,0 +1,97 @@
+# Game libraries, launcher data and graphics caches.
+#
+# Game installs belong to their launcher: every launcher can move a library to
+# another drive while keeping its configuration honest, so those rules are
+# NATIVE.  Shader caches and download scratch space are genuinely disposable.
+
+[pack]
+id = "games"
+title = "Game libraries, launchers and graphics caches"
+order = 40
+
+# --- disposable game data -------------------------------------------------- #
+
+[[rule]]
+id = "steam-shadercache"
+path = ["**/steamapps/shadercache/**"]
+category = "game-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.85
+rationale = "Precompiled GPU shaders for installed games; rebuilt the next time each game runs."
+
+[[rule]]
+id = "steam-scratch"
+path = ["**/steamapps/downloading/**", "**/steamapps/temp/**"]
+category = "game-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.8
+rationale = "Steam's download scratch space; only meaningful while an update is running."
+
+[[rule]]
+id = "gpu-shader-caches"
+path = [
+    "**/AppData/Local/D3DSCache/**",
+    "**/AppData/Local/NVIDIA/DXCache/**",
+    "**/AppData/Local/NVIDIA/GLCache/**",
+    "**/AppData/Local/AMD/DxCache/**",
+    "**/AppData/Local/AMD/GLCache/**",
+    "**/AppData/Local/Intel/ShaderCache/**",
+]
+category = "game-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.85
+rationale = "Driver-level shader cache; games rebuild it on their next launch (first launch is slower)."
+
+[[rule]]
+id = "game-redistributables"
+path = ["**/_CommonRedist/**", "**/Steamworks Shared/**", "**/DirectXRedist/**"]
+category = "game-redistributables"
+tier = "T2"
+action = "REVIEW"
+confidence = 0.5
+rationale = "DirectX/.NET redistributables shipped with games; games re-verify them, but some refuse to start until a verify runs."
+
+# --- game libraries (move with the launcher) ------------------------------- #
+
+[[rule]]
+id = "steam-library"
+path = ["**/steamapps/**", "**/SteamLibrary/**"]
+category = "game-library"
+tier = "T2"
+action = "NATIVE"
+confidence = 0.7
+rationale = "Steam library: move it with Steam so the client updates every game path for you."
+native = "Steam > Settings > Storage > select the library > Move"
+
+[[rule]]
+id = "epic-library"
+path = ["**/Epic Games/**", "**/ProgramData/Epic/EpicGamesLauncher/**"]
+category = "game-library"
+tier = "T2"
+action = "NATIVE"
+confidence = 0.7
+rationale = "Epic Games installation; the launcher moves installs to another drive without breaking them."
+native = "Epic launcher > Library > game > Move"
+
+[[rule]]
+id = "gog-library"
+path = ["**/GOG Games/**", "**/GOG Galaxy/Games/**", "**/GOG Galaxy/Games/*/**"]
+category = "game-library"
+tier = "T2"
+action = "NATIVE"
+confidence = 0.65
+rationale = "GOG game installation; GOG Galaxy can relocate it and update its records."
+native = "GOG Galaxy > game > Manage installation > Move folder"
+
+[[rule]]
+id = "battlenet-library"
+path = ["**/Battle.net/**", "**/Blizzard Entertainment/**"]
+category = "game-library"
+tier = "T2"
+action = "NATIVE"
+confidence = 0.6
+rationale = "Battle.net or Blizzard game data; move installs through the launcher so it keeps tracking them."
+native = "Battle.net > Settings > Game Install/Update > change the install folder, then Move"

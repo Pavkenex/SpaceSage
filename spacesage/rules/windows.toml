@@ -1,0 +1,168 @@
+# Windows system data: the OS and the programs installed on it.
+#
+# Everything here is either disposable OS scratch space (T1) or data the owning
+# Windows tool manages itself (T3 + NATIVE advice).  SpaceSage never executes a
+# NATIVE action -- it tells the user which built-in tool actually frees the
+# space safely.
+
+[pack]
+id = "windows"
+title = "Windows system and OS-managed data"
+order = 10
+
+# --- temporary and diagnostic data ----------------------------------------- #
+
+[[rule]]
+id = "windows-temp"
+path = ["**/Windows/Temp/**"]
+category = "windows-temp"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.95
+rationale = "Windows staging area for temporary files; safe to clear, files still in use are skipped."
+native = "Settings > System > Storage > Temporary files"
+
+[[rule]]
+id = "user-temp"
+path = ["**/AppData/Local/Temp/**"]
+category = "user-temp"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.9
+rationale = "Per-user temp folder; programs recreate what they need on the next run."
+native = "Settings > System > Storage > Temporary files"
+
+[[rule]]
+id = "crash-dumps"
+path = [
+    "**/AppData/Local/CrashDumps/**",
+    "**/Windows/Minidump/**",
+    "**/Windows/LiveKernelReports/**",
+    "**/AppData/Local/Microsoft/Windows/WER/**",
+    "**/Windows/MEMORY.DMP",
+]
+category = "crash-dumps"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.85
+rationale = "Crash and error-report data; it matters only while you are debugging that crash."
+native = "Settings > System > Storage > Temporary files"
+
+[[rule]]
+id = "dump-files"
+ext = ["dmp", "mdmp"]
+category = "crash-dumps"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.75
+rationale = "Windows/app crash dump file; only useful to a developer investigating the crash."
+
+[[rule]]
+id = "windows-logs"
+path = ["**/Windows/Logs/**", "**/Windows/Panther/**", "**/Windows/System32/LogFiles/**"]
+category = "windows-logs"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.8
+rationale = "Setup and servicing log files Windows has already finished writing."
+
+[[rule]]
+id = "windows-prefetch"
+path = ["**/Windows/Prefetch/**"]
+category = "windows-prefetch"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.7
+rationale = "Boot and application launch traces; Windows rebuilds them (first launches are slightly slower)."
+
+[[rule]]
+id = "thumbnail-cache"
+path = ["**/AppData/Local/Microsoft/Windows/Explorer/thumbcache_*.db"]
+category = "windows-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.85
+rationale = "Explorer thumbnail cache for the current user; Windows regenerates it on demand."
+native = "Disk Cleanup > Thumbnails"
+
+# --- OS-managed stores (advice only) --------------------------------------- #
+
+[[rule]]
+id = "windows-update-cache"
+path = ["**/SoftwareDistribution/Download/**"]
+category = "windows-update"
+tier = "T3"
+action = "NATIVE"
+confidence = 0.8
+rationale = "Update packages Windows already installed; let Windows remove them instead of deleting inside the servicing store."
+native = "Settings > System > Storage > Temporary files (Windows Update Cleanup)"
+
+[[rule]]
+id = "delivery-optimization"
+path = ["**/DeliveryOptimization/**"]
+category = "windows-update"
+tier = "T3"
+action = "NATIVE"
+confidence = 0.8
+rationale = "Peer-to-peer update cache; Windows manages it and can purge it safely."
+native = "Delete-DeliveryOptimizationCache -Force  (PowerShell)"
+
+[[rule]]
+id = "winsxs"
+path = ["**/Windows/WinSxS/**"]
+category = "windows-component-store"
+tier = "T3"
+action = "NATIVE"
+confidence = 0.75
+rationale = "Component store holding every servicing update; only DISM may safely reclaim parts of it."
+native = "Dism /Online /Cleanup-Image /StartComponentCleanup"
+
+[[rule]]
+id = "windows-old"
+path = ["**/Windows.old/**"]
+category = "windows-old"
+tier = "T3"
+action = "NATIVE"
+confidence = 0.85
+rationale = "Previous Windows installation kept for rollback; remove it with Disk Cleanup once the upgrade is proven."
+native = "Settings > System > Storage > Temporary files > Previous Windows installation(s)"
+
+[[rule]]
+id = "hiberfil"
+path = ["**/hiberfil.sys"]
+category = "hibernation"
+tier = "T3"
+action = "NATIVE"
+confidence = 0.8
+rationale = "Hibernation file mirrors your RAM; disable or shrink hibernation if you never hibernate."
+native = "powercfg /h off   (or: powercfg /h /size 40)"
+
+[[rule]]
+id = "pagefile"
+path = ["**/pagefile.sys", "**/swapfile.sys"]
+category = "pagefile"
+tier = "T3"
+action = "NATIVE"
+confidence = 0.7
+rationale = "Virtual memory file; shrinking or moving it only helps when the machine has RAM to spare."
+native = "System Properties > Advanced > Performance > Virtual memory"
+
+[[rule]]
+id = "msi-cache"
+path = ["**/Windows/Installer/**"]
+category = "msi-cache"
+tier = "T3"
+action = "NATIVE"
+confidence = 0.8
+rationale = "Installer cache required to repair and uninstall programs; never delete it by hand."
+native = "PatchCleaner to remove only orphaned MSI/MSP files"
+
+[[rule]]
+id = "recycle-bin"
+path = ["**/$Recycle.Bin/**"]
+category = "recycle-bin"
+tier = "T3"
+action = "NATIVE"
+confidence = 0.9
+rationale = "Files you already deleted once; emptying is permanent, so review them in Explorer first."
+native = "Empty the Recycle Bin (Settings > System > Storage > Temporary files)"

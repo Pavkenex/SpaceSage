@@ -24,6 +24,9 @@ Conventions:
   ``app_footprints`` (``docs/design.md`` section 5); :mod:`spacesage.stats`
   owns their contents and they are deleted with their entries by the foreign
   key cascade.
+* Schema v3 adds ``categories`` -- the materialised classification produced by
+  :mod:`spacesage.rules` (``docs/design.md`` section 6).  It follows the same
+  rules: derived data, owned by its stage, cascaded away with the entry.
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 """Schema revision this build reads and writes."""
 
 DEFAULT_DB_NAME = "spacesage.db"
@@ -114,7 +117,32 @@ CREATE TABLE app_footprints (
 );
 """
 
-MIGRATIONS: Mapping[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2}
+_SCHEMA_V3 = """
+-- Materialised classification (docs/design.md section 6), owned and rebuilt by
+-- spacesage.rules.build_categories().  One row per entry: the matched rule (or
+-- NULL for the "unknown" fallback), its verdict, and the size the matcher saw
+-- (folders carry their file-row subtree size).
+CREATE TABLE categories (
+    entry_id   INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+    pack       TEXT,                          -- NULL when no rule matched
+    rule_id    TEXT,                          -- NULL when no rule matched
+    category   TEXT    NOT NULL,
+    tier       TEXT    NOT NULL CHECK (tier IN ('T1', 'T2', 'T3')),
+    action     TEXT    NOT NULL,
+    confidence REAL    NOT NULL,
+    rationale  TEXT    NOT NULL,
+    native     TEXT,
+    bytes      INTEGER NOT NULL,
+    is_dir     INTEGER NOT NULL CHECK (is_dir IN (0, 1))
+);
+
+CREATE INDEX idx_categories_category ON categories(category);
+CREATE INDEX idx_categories_tier     ON categories(tier);
+CREATE INDEX idx_categories_action   ON categories(action);
+CREATE INDEX idx_categories_bytes    ON categories(bytes DESC);
+"""
+
+MIGRATIONS: Mapping[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3}
 """Migration scripts keyed by the schema version they produce."""
 
 INSERT_ENTRY_SQL = """
@@ -282,8 +310,9 @@ def insert_entries(conn: sqlite3.Connection, rows: Iterable[EntryRow]) -> int:
 def clear_index(conn: sqlite3.Connection) -> None:
     """Delete every indexed row (schema untouched); used by ``ingest --replace``.
 
-    The materialised derivations are cleared too: ``dir_sizes`` through the
-    foreign key cascade, ``app_footprints`` explicitly (it has no entry id).
+    The materialised derivations are cleared too: ``dir_sizes`` and
+    ``categories`` through the foreign key cascade, ``app_footprints``
+    explicitly (it has no entry id).
     """
     conn.execute("BEGIN IMMEDIATE")
     try:

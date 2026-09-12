@@ -24,6 +24,7 @@ It is a **desktop application** (PySide6/Qt) — a real windowed program, not a 
 
 - [`docs/design.md`](docs/design.md) — architecture, data model, plan schema, safety model, executor design
 - [`docs/slices.md`](docs/slices.md) — build slices with acceptance criteria
+- [`docs/rules.md`](docs/rules.md) — rule-pack authoring guide (matchers, tiers, actions, ordering)
 - [`docs/research/ai-and-alternatives.md`](docs/research/ai-and-alternatives.md) — research: LLM vs. rules vs. other systems
 - [`docs/adr/`](docs/adr/) — architecture decision records
 
@@ -41,14 +42,17 @@ uv run ruff format --check .   # formatting
 uv run mypy spacesage          # types (strict)
 ```
 
-The internal CLI (development/automation only) runs as `uv run python -m spacesage --version`, or via the installed `spacesage` console script. Two engine stages are available now:
+The internal CLI (development/automation only) runs as `uv run python -m spacesage --version`, or via the installed `spacesage` console script. Three engine stages are available now:
 
 ```sh
 uv run python -m spacesage ingest export.csv --db index.db   # --replace reloads, --progress reports to stderr
 uv run python -m spacesage stats --db index.db                # --by dir|ext|age|app, --top N, --json, --materialize
+uv run python -m spacesage classify --db index.db             # --rules DIR, --list-rules, --top N, --json, --materialize
 ```
 
 `ingest` streams a WizTree export into the SQLite index; `stats` aggregates it (biggest directories and files, per-extension totals, age buckets, per-app footprints) from file rows only and reports folder-row disagreements as data-quality warnings. It is read-only unless `--materialize` is passed, which also rebuilds the derived `dir_sizes` / `app_footprints` tables for later stages.
+
+`classify` runs the rule packs over every entry — built-in packs plus your own in `~/.config/spacesage/rules/` (`--rules DIR` to point elsewhere), shadowed by rule id — and prints per-tier / per-category counts and sizes plus the largest entries no rule recognised. It is read-only unless `--materialize` is passed, which writes the derived `categories` table (schema v3). Every rule carries a category, a risk tier, an action, a confidence and a plain-language rationale; see [`docs/rules.md`](docs/rules.md) to write your own.
 
 GUI dependencies arrive with the desktop-app slices — see [`docs/slices.md`](docs/slices.md) and [`docs/dev-environment.md`](docs/dev-environment.md).
 

@@ -1,0 +1,67 @@
+# Browser profile caches.
+#
+# Cookies, history, saved passwords and bookmarks are NOT caches and are never
+# listed here -- only the regenerable resource caches under each profile.
+# Close the browser before clearing them.
+
+[pack]
+id = "browsers"
+title = "Browser caches"
+order = 30
+
+[[rule]]
+id = "chrome-cache"
+path = [
+    "**/Google/Chrome/User Data/*/Cache/**",
+    "**/Google/Chrome/User Data/*/Code Cache/**",
+    "**/Google/Chrome/User Data/*/GPUCache/**",
+    "**/Google/Chrome/User Data/*/ShaderCache/**",
+    "**/Google/Chrome/User Data/*/GrShaderCache/**",
+]
+category = "browser-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.9
+rationale = "Chrome resource cache; pages reload their assets (do it with Chrome closed)."
+native = "chrome://settings/clearBrowserData"
+
+[[rule]]
+id = "edge-cache"
+path = [
+    "**/Microsoft/Edge/User Data/*/Cache/**",
+    "**/Microsoft/Edge/User Data/*/Code Cache/**",
+    "**/Microsoft/Edge/User Data/*/GPUCache/**",
+    "**/Microsoft/Edge/User Data/*/ShaderCache/**",
+    "**/Microsoft/Edge/User Data/*/GrShaderCache/**",
+]
+category = "browser-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.9
+rationale = "Edge resource cache; pages reload their assets (do it with Edge closed)."
+native = "edge://settings/clearBrowserData"
+
+[[rule]]
+id = "brave-cache"
+path = [
+    "**/BraveSoftware/Brave-Browser/User Data/*/Cache/**",
+    "**/BraveSoftware/Brave-Browser/User Data/*/Code Cache/**",
+    "**/BraveSoftware/Brave-Browser/User Data/*/GPUCache/**",
+    "**/BraveSoftware/Brave-Browser/User Data/*/ShaderCache/**",
+]
+category = "browser-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.9
+rationale = "Brave resource cache; pages reload their assets (do it with Brave closed)."
+native = "brave://settings/clearBrowserData"
+
+[[rule]]
+id = "firefox-cache"
+path = ["**/Mozilla/Firefox/Profiles/*/cache2/**", "**/Mozilla/Firefox/Profiles/*/startupCache/**"]
+category = "browser-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.9
+rationale = "Firefox profile cache; pages reload their assets (do it with Firefox closed)."
+native = "about:preferences#privacy > Clear Data"

@@ -112,6 +112,11 @@ class DirSize:
     child_dir_count: int
     export_bytes: int
     export_allocated: int | None
+    name: str = ""
+    """Last path component (a drive root's name is ``C:``)."""
+
+    mtime: int | None = None
+    """The folder row's own ``Modified`` epoch (files keep their own)."""
 
     @property
     def delta_bytes(self) -> int:
@@ -447,7 +452,7 @@ class _FolderAccumulator:
 _FILES_SQL = "SELECT parent_id, size, allocated, hardlink_flag FROM entries WHERE is_dir = 0"
 
 _FOLDERS_SQL = """
-SELECT id, parent_id, path, depth, size, allocated
+SELECT id, parent_id, path, name, depth, size, allocated, mtime
 FROM entries
 WHERE is_dir = 1
 ORDER BY depth DESC, id DESC
@@ -472,9 +477,16 @@ def iter_dir_sizes(conn: sqlite3.Connection) -> Iterator[DirSize]:
             accumulators[parent_id] = accumulator
         accumulator.add_file(int(size), allocated, hardlink=bool(hardlink))
 
-    for entry_id, parent_id, path, depth, export_bytes, export_allocated in conn.execute(
-        _FOLDERS_SQL
-    ):
+    for (
+        entry_id,
+        parent_id,
+        path,
+        name,
+        depth,
+        export_bytes,
+        export_allocated,
+        mtime,
+    ) in conn.execute(_FOLDERS_SQL):
         accumulator = accumulators.pop(int(entry_id), None)
         if accumulator is None:
             accumulator = _FolderAccumulator()
@@ -494,6 +506,8 @@ def iter_dir_sizes(conn: sqlite3.Connection) -> Iterator[DirSize]:
             child_dir_count=accumulator.child_dir_count,
             export_bytes=int(export_bytes),
             export_allocated=int(export_allocated) if export_allocated is not None else None,
+            name=str(name),
+            mtime=int(mtime) if mtime is not None else None,
         )
         if parent_id is not None:
             parent = accumulators.get(int(parent_id))

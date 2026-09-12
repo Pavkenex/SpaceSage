@@ -9,12 +9,14 @@ the slices that implement them -- see ``docs/slices.md``.
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
 import sys
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from spacesage import __version__, db, stats
+from spacesage import __version__, db, rules, stats
 from spacesage.ingest import IngestError, IngestProgress, RunStats, ingest_csv
 
 PROG = "spacesage"
@@ -112,6 +114,52 @@ def build_parser() -> argparse.ArgumentParser:
         help="also rebuild the derived dir_sizes/app_footprints tables (writes to the index)",
     )
     stats_parser.set_defaults(handler=_run_stats)
+
+    classify_parser = subparsers.add_parser(
+        "classify",
+        help="classify entries with the TOML rule packs (category, tier, action)",
+        description=(
+            "Classify every indexed entry with the rule packs (built-in packs "
+            "plus user packs shadowing them by rule id). Prints per-category, "
+            "per-tier and unknown counts and sizes; read-only unless "
+            "--materialize is passed, which also writes the categories table."
+        ),
+    )
+    classify_parser.add_argument(
+        "--db",
+        metavar="PATH",
+        default=db.DEFAULT_DB_NAME,
+        help=("index database file, or a directory (then PATH/spacesage.db); default: %(default)s"),
+    )
+    classify_parser.add_argument(
+        "--rules",
+        metavar="DIR",
+        default=None,
+        help="user rule-pack directory to load instead of ~/.config/spacesage/rules",
+    )
+    classify_parser.add_argument(
+        "--list-rules",
+        action="store_true",
+        help="print the effective rule order (with --json: as JSON) and exit",
+    )
+    classify_parser.add_argument(
+        "--top",
+        type=int,
+        default=rules.DEFAULT_TOP,
+        metavar="N",
+        help="rows per ranked list (default: %(default)s)",
+    )
+    classify_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the complete report as JSON",
+    )
+    classify_parser.add_argument(
+        "--materialize",
+        action="store_true",
+        help="also rebuild the derived categories table (writes to the index)",
+    )
+    classify_parser.set_defaults(handler=_run_classify)
     return parser
 
 
@@ -188,6 +236,68 @@ def _run_stats(args: argparse.Namespace) -> int:
             return 1
         print(
             stats.render_json(report) if args.json else stats.render_text(report, by=args.by),
+            end="",
+        )
+        return 0
+    finally:
+        conn.close()
+
+
+def _load_ruleset(args: argparse.Namespace) -> rules.RuleSet:
+    """Load the effective rule set; a bad --rules path is a hard error."""
+    return rules.load_rules(user_dir=Path(args.rules) if args.rules else None)
+
+
+def _run_classify(args: argparse.Namespace) -> int:
+    try:
+        ruleset = _load_ruleset(args)
+    except rules.RulesError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.list_rules:
+        print(
+            json.dumps(ruleset.to_dict(), indent=2) + "\n"
+            if args.json
+            else rules.render_rules(ruleset),
+            end="",
+        )
+        return 0
+
+    target = db.resolve_db_path(args.db)
+    if not target.is_file():
+        print(
+            f"error: no index at {target}; ingest a WizTree export first "
+            f"(spacesage ingest <csv> --db {args.db})",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        conn = db.open_db(target)
+    except (db.SchemaError, sqlite3.Error) as exc:
+        print(f"error: cannot open the index at {target}: {exc}", file=sys.stderr)
+        return 1
+    try:
+        try:
+            # One reference point for the whole invocation: the materialised
+            # rows and the printed report must agree on age-based rules.
+            moment = time.time()
+            if args.materialize:
+                built = rules.build_categories(conn, ruleset, now=moment)
+                print(
+                    f"derived: {built.entries} categories rows "
+                    f"({built.matched} matched, {built.unknown} unknown), "
+                    f"rules {built.rules_sha256[:12]}",
+                    file=sys.stderr,
+                )
+            report = rules.classify_report(
+                conn, ruleset, top=args.top, now=moment, db_path=str(target)
+            )
+        except (rules.RulesError, db.SchemaError, sqlite3.Error) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            rules.render_json(report) if args.json else rules.render_text(report),
             end="",
         )
         return 0

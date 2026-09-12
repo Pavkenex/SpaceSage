@@ -593,7 +593,7 @@ def test_schema_is_versioned_with_wal_and_indexes(tmp_path: Path) -> None:
     db_path = tmp_path / "index.db"
     ingest_csv(DATA_DIR / "basic.csv", db_path)
     conn = db.open_db(db_path)
-    assert db.schema_version(conn) == db.SCHEMA_VERSION == 2
+    assert db.schema_version(conn) == db.SCHEMA_VERSION == 3
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"meta", "drives", "entries"} <= tables

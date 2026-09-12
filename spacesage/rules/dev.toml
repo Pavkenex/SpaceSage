@@ -1,0 +1,243 @@
+# Developer caches, package stores and build artifacts.
+#
+# Download caches (T1) cost only a re-download; stores that rebuild meaningful
+# work (cargo/gradle/maven/nuget/go modules, virtualenvs, build outputs) are T2
+# -- still regenerable, but investigate before quarantining.
+# Container disks (Docker/WSL) are NATIVE: they grow and shrink only through
+# their own tooling.
+
+[pack]
+id = "dev"
+title = "Developer caches, package stores and build artifacts"
+order = 20
+
+# --- package-manager download caches --------------------------------------- #
+
+[[rule]]
+id = "pip-cache"
+path = ["**/AppData/Local/pip/Cache/**", "**/.cache/pip/**"]
+category = "dev-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.95
+rationale = "pip download/build cache; regenerates automatically and safe to clear when no builds are running."
+native = "pip cache purge"
+
+[[rule]]
+id = "uv-cache"
+path = ["**/AppData/Local/uv/cache/**", "**/.cache/uv/**"]
+category = "dev-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.95
+rationale = "uv wheel/build cache; uv re-downloads on the next sync."
+native = "uv cache clean"
+
+[[rule]]
+id = "npm-cache"
+path = ["**/AppData/Local/npm-cache/**", "**/AppData/Roaming/npm-cache/**", "**/.npm/_cacache/**"]
+category = "dev-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.95
+rationale = "npm tarball cache; npm re-downloads packages on the next install."
+native = "npm cache clean --force"
+
+[[rule]]
+id = "yarn-cache"
+path = ["**/AppData/Local/Yarn/Cache/**", "**/.cache/yarn/**"]
+category = "dev-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.95
+rationale = "Yarn package cache; re-filled on the next install."
+native = "yarn cache clean"
+
+[[rule]]
+id = "pnpm-store"
+path = ["**/AppData/Local/pnpm/store/**", "**/.local/share/pnpm/store/**", "**/.pnpm-store/**"]
+category = "dev-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.9
+rationale = "pnpm content-addressable store; prune instead of clearing when pnpm projects live on this drive."
+native = "pnpm store prune"
+
+[[rule]]
+id = "bun-cache"
+path = ["**/.bun/install/cache/**"]
+category = "dev-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.95
+rationale = "Bun package cache; re-downloads on the next install."
+native = "bun pm cache rm"
+
+[[rule]]
+id = "nuget-packages"
+path = ["**/.nuget/packages/**"]
+category = "dev-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.9
+rationale = "NuGet global package folder; restored from nuget.org on the next build."
+native = "dotnet nuget locals global-packages --clear"
+
+[[rule]]
+id = "cargo-registry"
+path = ["**/.cargo/registry/**"]
+category = "dev-cache"
+tier = "T2"
+action = "DELETE_QUARANTINE"
+confidence = 0.8
+rationale = "Downloaded crate sources and index; re-fetched on the next build, so keep it when you build offline."
+native = "cargo install cargo-cache ; cargo cache --autoclean"
+
+[[rule]]
+id = "gradle-caches"
+path = ["**/.gradle/caches/**", "**/.gradle/wrapper/dists/**"]
+category = "dev-cache"
+tier = "T2"
+action = "DELETE_QUARANTINE"
+confidence = 0.8
+rationale = "Gradle dependency and build caches; the next build re-downloads and rebuilds them."
+
+[[rule]]
+id = "maven-repo"
+path = ["**/.m2/repository/**"]
+category = "dev-cache"
+tier = "T2"
+action = "DELETE_QUARANTINE"
+confidence = 0.8
+rationale = "Local Maven repository; artifacts are re-downloaded on the next build."
+native = "mvn dependency:purge-local-repository"
+
+[[rule]]
+id = "go-build-cache"
+path = ["**/AppData/Local/go-build/**", "**/.cache/go-build/**"]
+category = "dev-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.9
+rationale = "Go build cache; recompiles on demand."
+native = "go clean -cache"
+
+[[rule]]
+id = "go-modules"
+path = ["**/go/pkg/mod/**"]
+category = "dev-cache"
+tier = "T2"
+action = "DELETE_QUARANTINE"
+confidence = 0.8
+rationale = "Downloaded Go module cache; re-fetched on the next build (keeps offline builds broken until then)."
+native = "go clean -modcache"
+
+[[rule]]
+id = "conda-packages"
+path = ["**/anaconda3/pkgs/**", "**/miniconda3/pkgs/**", "**/Miniforge3/pkgs/**"]
+category = "dev-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.9
+rationale = "Conda package tarballs and extracted packages; conda re-fetches what an environment needs."
+native = "conda clean --all"
+
+# --- project artifacts ----------------------------------------------------- #
+
+[[rule]]
+id = "node-modules"
+path = ["**/node_modules/**"]
+category = "build-artifacts"
+tier = "T2"
+action = "DELETE_QUARANTINE"
+confidence = 0.8
+rationale = "Installed JavaScript dependencies; `npm ci` / `pnpm install` recreates them, so quarantine rather than delete."
+native = "npm ci   (in the project folder)"
+
+[[rule]]
+id = "python-venv"
+path = ["**/.venv/**", "**/venv/**", "**/virtualenv/**"]
+category = "build-artifacts"
+tier = "T2"
+action = "DELETE_QUARANTINE"
+confidence = 0.6
+rationale = "Python virtual environment (a folder merely named venv counts); recreate it with the project's documented install command."
+
+[[rule]]
+id = "pycache"
+path = ["**/__pycache__/**"]
+category = "build-artifacts"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.95
+rationale = "Compiled Python bytecode; regenerated on the next import."
+
+[[rule]]
+id = "python-tool-caches"
+path = ["**/.pytest_cache/**", "**/.mypy_cache/**", "**/.ruff_cache/**", "**/.tox/**"]
+category = "dev-cache"
+tier = "T1"
+action = "DELETE_QUARANTINE"
+confidence = 0.95
+rationale = "Test/type-check/lint caches; rebuilt on the next run."
+
+[[rule]]
+id = "build-outputs"
+path = ["**/dist/**", "**/build/**", "**/bin/Debug/**", "**/bin/Release/**", "**/obj/**"]
+category = "build-artifacts"
+tier = "T2"
+action = "DELETE_QUARANTINE"
+confidence = 0.5
+rationale = "Typical build output directory; confirm it is generated output (not a folder that merely shares the name) before quarantining."
+
+[[rule]]
+id = "cargo-target"
+path = ["**/target/debug/**", "**/target/release/**"]
+category = "build-artifacts"
+tier = "T2"
+action = "DELETE_QUARANTINE"
+confidence = 0.7
+rationale = "Rust build output; `cargo build` recreates it (a fresh build can take a long time)."
+native = "cargo clean"
+
+# --- model caches ---------------------------------------------------------- #
+
+[[rule]]
+id = "huggingface-cache"
+path = ["**/.cache/huggingface/**", "**/AppData/Local/huggingface/**"]
+category = "model-cache"
+tier = "T2"
+action = "DELETE_QUARANTINE"
+confidence = 0.8
+rationale = "Downloaded model weights; re-downloaded on demand and often many GB, so prune the models you no longer use."
+
+[[rule]]
+id = "torch-cache"
+path = ["**/.cache/torch/**"]
+category = "model-cache"
+tier = "T2"
+action = "DELETE_QUARANTINE"
+confidence = 0.75
+rationale = "Torch hub and checkpoint cache; re-downloaded the next time those models are loaded."
+
+# --- container disks (advice only) ----------------------------------------- #
+
+[[rule]]
+id = "docker-disk"
+path = ["**/AppData/Local/Docker/wsl/**", "**/AppData/Roaming/Docker/wsl/**"]
+category = "container-storage"
+tier = "T3"
+action = "NATIVE"
+confidence = 0.8
+rationale = "Docker Desktop disk image: it grows freely but shrinks only after unused images are removed and the disk is compacted."
+native = "docker system prune -a   then   Optimize-VHD (Hyper-V) / wsl --manage <distro> --set-sparse true"
+
+[[rule]]
+id = "wsl-disk"
+path = ["**/AppData/Local/Packages/*/LocalState/*.vhdx"]
+category = "container-storage"
+tier = "T3"
+action = "NATIVE"
+confidence = 0.75
+rationale = "WSL distribution disk: reclaim space by deleting unused files inside the distribution and trimming the virtual disk."
+native = "wsl --manage <distro> --set-sparse true"
