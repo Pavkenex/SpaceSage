@@ -43,6 +43,23 @@ POSIX_ONLY = pytest.mark.skipif(os.name == "nt", reason="POSIX-only filesystem s
 windows_only = pytest.mark.skipif(os.name != "nt", reason="Windows-only path")
 
 
+def _probe_file_identities() -> bool:
+    """Does this machine's filesystem report ``st_dev``/``st_ino`` at all?"""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = Path(tmp) / "probe.bin"
+        probe.write_bytes(b"x")
+        info = probe.stat()
+    return bool(getattr(info, "st_ino", 0)) and bool(getattr(info, "st_dev", 0))
+
+
+IDENTITY_FS = _probe_file_identities()
+requires_identity = pytest.mark.skipif(
+    not IDENTITY_FS, reason="the filesystem does not report file identities (no hardlinks)"
+)
+
+
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
@@ -412,6 +429,7 @@ def test_only_files_over_the_partial_window_get_a_second_read(tmp_path: Path) ->
     assert report.groups[0].sha256 == digest_of(root / "a.bin")
 
 
+@requires_identity
 def test_reclaimable_bytes_count_copies_not_paths(tmp_path: Path) -> None:
     """The trio plus its hard link: 4 paths, 3 copies, 2 reclaimable."""
     tree = plant(tmp_path)
@@ -474,6 +492,7 @@ def test_scan_is_deterministic_for_a_static_tree(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
+@requires_identity
 def test_hardlinked_paths_alone_are_a_hardlink_set(tmp_path: Path) -> None:
     root = tmp_path / "links"
     root.mkdir()
@@ -493,6 +512,7 @@ def test_hardlinked_paths_alone_are_a_hardlink_set(tmp_path: Path) -> None:
     assert item.set_id == "h1"
 
 
+@requires_identity
 def test_hardlink_set_members_carry_their_roles(tmp_path: Path) -> None:
     root = tmp_path / "links"
     root.mkdir()
@@ -509,6 +529,7 @@ def test_hardlink_set_members_carry_their_roles(tmp_path: Path) -> None:
     assert linked.links == 2
 
 
+@requires_identity
 def test_the_trio_group_marks_its_hard_link_as_a_link(tmp_path: Path) -> None:
     tree = plant(tmp_path)
     report = scan_tree(tree, min_size=0)
@@ -522,6 +543,7 @@ def test_the_trio_group_marks_its_hard_link_as_a_link(tmp_path: Path) -> None:
     assert member_of(group, tree.another).role == ROLE_DUPLICATE
 
 
+@requires_identity
 def test_hardlinked_paths_are_not_read_twice(tmp_path: Path) -> None:
     tree = plant(tmp_path)
     report = scan_tree(tree, min_size=0)
@@ -530,6 +552,7 @@ def test_hardlinked_paths_are_not_read_twice(tmp_path: Path) -> None:
     assert report.stats.partial_reads + report.stats.full_reads < naive * 2
 
 
+@requires_identity
 def test_hardlinked_bytes_are_not_reclaimable(tmp_path: Path) -> None:
     """Deleting a hard link frees nothing, so it must not inflate the gain."""
     root = tmp_path / "links"
@@ -575,6 +598,7 @@ def test_keep_policy_is_recorded_on_every_group(tmp_path: Path) -> None:
     assert KEEP_POLICY == "newest-then-shortest-path"
 
 
+@requires_identity
 def test_identical_timestamps_are_reported_as_a_tie(tmp_path: Path) -> None:
     """keep.bin and its hard link share one timestamp: the shorter path wins."""
     tree = plant(tmp_path)
@@ -626,6 +650,7 @@ def member(path: str, *, dev: int | None = 1, ino: int | None = 10) -> GroupMemb
     )
 
 
+@requires_identity
 def test_hardlink_suggestion_is_feasible_on_one_volume(tmp_path: Path) -> None:
     tree = plant(tmp_path)
     report = scan_tree(tree, min_size=0)
@@ -639,6 +664,7 @@ def test_hardlink_suggestion_is_feasible_on_one_volume(tmp_path: Path) -> None:
     assert "one volume" in plan.reason
 
 
+@requires_identity
 def test_hardlink_suggestion_leaves_existing_links_alone(tmp_path: Path) -> None:
     """The link to the kept path already shares its payload: nothing to do."""
     tree = plant(tmp_path)
@@ -721,6 +747,7 @@ def test_scan_of_a_lone_file_tree_creates_nothing(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
+@requires_identity
 def test_text_report_mentions_the_key_facts(tmp_path: Path) -> None:
     tree = plant(tmp_path)
     text = deepscan.render_text(scan_tree(tree, min_size=0))
@@ -735,6 +762,7 @@ def test_text_report_mentions_the_key_facts(tmp_path: Path) -> None:
     assert "reclaimable" in text
 
 
+@requires_identity
 def test_text_report_lists_hardlink_sets(tmp_path: Path) -> None:
     root = tmp_path / "links"
     root.mkdir()
