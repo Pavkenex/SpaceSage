@@ -14,7 +14,7 @@ Every suggestion carries a risk tier, a confidence, an estimated space gain, and
 
 Optionally plug in **any OpenAI-compatible LLM** (cloud or local — Ollama, LM Studio, vLLM, OpenAI, OpenRouter, …) to help classify the ambiguous long tail, narrate the plan, or review it for risks. The AI can suggest; it can never execute.
 
-It is a **local command-line program** — zero-dependency Python core, shipped as a single portable executable (Windows, PyInstaller). No server, no web app, no accounts. The approval flow lives in your terminal (`spacesage approve`); the HTML report is just a static file it writes, and the AI layer is optional.
+It is a **desktop application** (PySide6/Qt) — a real windowed program, not a web app and not a CLI: import your export, review suggestions, approve a plan, execute it, undo if needed. It ships as a single portable executable (Windows, PyInstaller). Underneath, the analysis engine is a zero-dependency Python library (usable on its own), and a minimal internal CLI exists for development and automation.
 
 ## Status
 

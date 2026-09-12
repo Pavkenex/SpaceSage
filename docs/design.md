@@ -14,17 +14,17 @@ Drives fill up and it's never obvious *what to do*:
 
 **Goal:** from a single WizTree CSV export (+ a few preferences), produce a complete, ordered, safety-gated **course of action** — every item with a tier, confidence, expected gain, and a plain-language "why" — then optionally execute it with full undo.
 
-**Form factor:** a **local command-line program** — zero-dependency Python core, shipped as a single portable `spacesage.exe` for Windows (PyInstaller). No server, no web app, no accounts: it reads files, writes files, and only executes what you explicitly approve. The HTML report is a *static document* it generates; opening it is optional.
+**Form factor:** a **desktop application** — a native windowed program built with PySide6 (Qt Widgets), shipped as a single portable `spacesage.exe` for Windows (PyInstaller). Not a web app and not a CLI: it runs locally, reads files, writes files, and only executes what you explicitly approve in the UI. The analysis engine is a zero-dependency Python library the UI wraps; a minimal internal CLI exists only for development, CI and automation — it is not the product surface.
 
 ## 2. Safety principles (non-negotiable)
 
 1. **Analysis is read-only.** Execution requires an itemized, approved plan.
 2. **Three risk tiers.** T1 = disposable temp/caches (quarantine after itemized approval); T2 = app-owned data, regenerable artifacts (investigate first, prefer native cleanup); T3 = report-only, never in an executable plan (system dirs, profile roots, repos, databases, unknown large files).
 3. **"Delete" means quarantine.** Move to a quarantine store with a manifest; purge is a separate, later, explicit step. Undo = move back.
-4. **Dry-run by default.** `apply` prints resolved operations unless `--execute` is passed with an approved manifest; the manifest is bound to the plan by id.
+4. **Dry-run by default.** The app always shows a resolved dry-run preview; execution requires explicit confirmation of the current plan, and a plan_id-bound manifest gates exactly which items may run.
 5. **Re-validate immediately before every operation** (exists, under expected root, not newly a reparse point, tier re-check).
 6. **No wildcards, absolute paths only.** Refuse drive roots, profile roots, system dirs, unknown paths for destructive actions.
-7. **Journal everything.** `spacesage undo <journal>` reverses moves and quarantines in reverse order.
+7. **Journal everything.** Undo in the app (or `spacesage undo <journal>` for automation) reverses moves and quarantines in reverse order, with verification.
 8. **No silent partial success.** Per-item results + summary; locked/in-use files skipped and reported.
 9. **AI is optional and unprivileged.** AI can suggest, classify, narrate, review — it can never execute, and every AI-proposed item goes through the same validation pipeline as rule-based items.
 10. **Machine scope.** An export from another machine is analysis-only unless local path existence is established.
@@ -42,7 +42,7 @@ WizTree CSV ─► ingest ─► SQLite index ─► stats ─► classify(rules
 ```
 spacesage/
   __init__.py         # version
-  cli.py              # argparse subcommands
+  cli.py              # internal CLI (dev/tests/automation — NOT the product surface)
   config.py           # TOML config + env overrides
   db.py               # SQLite schema, migrations, helpers
   ingest.py           # streaming WizTree CSV → SQLite
@@ -52,7 +52,7 @@ spacesage/
   planner.py          # plan.json v1 generation (the course of action)
   deepscan.py         # optional live hash scan (exact duplicates)
   models.py           # dataclasses: Entry, Drive, Action, Plan, …
-  report.py           # self-contained HTML + Markdown reports
+  report.py           # Markdown/HTML export documents (share-friendly, optional)
   executor/
     __init__.py       # platform dispatch
     journal.py        # JSONL journal + undo
@@ -62,12 +62,20 @@ spacesage/
     client.py         # OpenAI-compatible /chat/completions (stdlib urllib)
     prompts.py        # use-case prompts + output JSON schemas
     guardrails.py     # schema validation, dataset locking, caching, cost meter
+  app/                # ── THE PRODUCT: PySide6 desktop application ──
+    __init__.py
+    main.py           # QApplication bootstrap (python -m spacesage.app)
+    windows.py        # main window, navigation, status bar
+    views/            # import wizard, dashboard, suggestions, plan/execute, undo, settings
+    models/           # QAbstractTableModel view-models over the engine
+    assets/           # icons, theme resources
   rules/*.toml        # built-in rule packs
 tests/
   fixtures/gen.py     # synthetic WizTree CSV generator (incl. "full disk" scenario)
+  gui/                # pytest-qt offscreen GUI tests + screenshot artifacts
 ```
 
-**Dependency policy: zero-dependency core (stdlib only).** Optional extras: `[dev]` pytest/ruff/mypy, `[build]` pyinstaller. The AI layer needs no SDK — plain HTTP via `urllib`.
+**Dependency policy:** the **engine** is zero-dependency (stdlib only) so it stays runnable everywhere, including headless machines. The desktop app adds one extra: `[gui]` = PySide6. Dev extras: pytest, pytest-qt, ruff, mypy, pyyaml; build: pyinstaller. The AI layer needs no SDK — plain HTTP via `urllib`.
 
 ## 5. Data model (SQLite)
 
@@ -138,14 +146,19 @@ Built-in packs (v0.1): `windows.toml`, `dev.toml`, `browsers.toml`, `media.toml`
 - **Long paths:** `\\?\`-prefixing on Windows; `MAX_PATH` handling tests.
 - **Re-validation** right before every op, and again after (result verification).
 
-## 9. Reports & approval
+## 9. Desktop app — screens & flows
 
-SpaceSage is a local program: there is **no server and no web app**. Its human-facing output is **documents**, and approval is a **program flow first**:
+The product is the GUI (PySide6 widgets). One window, left navigation, five screens:
 
-- `report.md` — full report in Markdown (terminal-friendly, chat-friendly).
-- `report.html` — a **static, self-contained file** (inline CSS/JS, no CDN, no server): summary cards (total size, per-drive free, estimated gains), category bars, sortable/filterable tables (top dirs, top files, candidates, duplicate groups), and the action list as a visual checklist. Opening it is optional; it can also export the same `approved.json`.
-- `spacesage approve <plan.json> --select a1,a3 | --interactive | --tier T1` — the **primary approval path**: writes `approved.json` (itemized, plan_id-bound). `--interactive` is a terminal checklist.
-- `spacesage report --format html|md|json`.
+1. **Import** — drag & drop or file picker for a WizTree CSV; parsing progress (rows/sec); auto-detected drives; target drive(s) + free-space reserve + size filters; "Analyze" never blocks the UI.
+2. **Dashboard** — drive usage summary, category breakdown (bars / treemap), top directories & files (sortable, filterable), search.
+3. **Suggestions** — candidates grouped by kind (Safe to delete / Move / Review); each row shows path, size, tier, confidence, "why"; editable destination for moves; bulk select; live total of selected gains.
+4. **Plan & Execute** — the consolidated course of action; per-item approve/reject (backed by a plan_id-bound approved set); budget/conflict warnings; **Dry-run preview** (exactly what will happen); **Execute** behind an explicit confirmation dialog with live per-item progress; failures surfaced, never hidden; **Undo** view (journal history, one-click revert with verification).
+5. **Settings** — thresholds, target drives, quarantine location, rule-pack overrides, AI configuration (optional).
+
+AI assists (optional, off by default) surface inside these screens: "Explain this selection", "Review the plan" (adds annotations), "Ask about my disk" — advisory only, never executable.
+
+Exports the app can write on request: `plan.json` (the contract), `report.md` (shareable summary), and a static `report.html` *document* (convenience — not the app itself).
 
 ## 10. AI assist layer (optional) — see research doc
 
@@ -158,21 +171,17 @@ Verdict (details in [`research/ai-and-alternatives.md`](research/ai-and-alternat
 
 Config: `base_url`, `api_key`, `model`, `timeout`, `max_tokens`, `redact_paths`; presets for `ollama` (http://localhost:11434/v1), `lmstudio`, `openai`, `openrouter`, custom. Guardrails: schema validation with repair retry, every referenced path must exist in the index, AI output enters the same approval pipeline as everything else, response caching keyed by content hash, token/cost meter in reports, **off until configured**, graceful degradation to deterministic output. Filenames are treated as untrusted data (prompt-injection resistant prompts).
 
-## 11. CLI surface
+## 11. Internal CLI (development & automation only)
+
+Not the product surface — a minimal CLI remains for development, CI and automation; every app flow has an engine-level equivalent:
 
 ```
-spacesage ingest <csv> [--db DIR]              # stream + index
-spacesage stats [--top N] [--by ext|age|app|dir]
-spacesage classify                             # run rule packs → categories
-spacesage candidates [--kind delete|move|stale|dupes|app]
-spacesage deepscan <root>… [--yes]             # optional live hash scan (exact dupes)
-spacesage plan [--to D: --reserve 20G]         # → plan.json + summary
-spacesage approve <plan.json> [--select a1,a3 | --interactive | --tier T1]   # → approved.json (primary)
-spacesage report [--format html|md|json]       # static document, optional
+spacesage ingest <csv> [--db DIR]              # load an export into the index
+spacesage stats / classify / candidates        # engine stages
+spacesage plan [--to D: --reserve 20G]         # plan.json v1
 spacesage apply <plan.json> --approve <approved.json> [--execute]
 spacesage undo <journal.jsonl>
-spacesage ai check | ai summarize | ai review
-spacesage config set|get|list
+spacesage ai check|summarize|review            # AI diagnostics
 ```
 
 ## 12. Config
@@ -185,11 +194,12 @@ spacesage config set|get|list
 - Fixture generator: synthetic WizTree CSVs including a full "full disk" scenario and golden plan.
 - Executor integration tests on temp trees: POSIX in every CI run; Windows job (`windows-latest`) for robocopy/mklink paths.
 - AI tests against a local stub OpenAI-compatible server (stdlib `http.server`) — no network in tests.
-- E2E: generate scenario → ingest → classify → plan → dry-run → apply in sandbox → undo → tree verified restored.
+- GUI: pytest-qt with `QT_QPA_PLATFORM=offscreen`; every key screen renders to a PNG artifact (eyeballed); all app logic sits in view-models with plain unit tests. Dev-container GL-lib setup: see `docs/dev-environment.md`.
+- E2E: generate scenario → ingest → classify → plan → dry-run → apply in sandbox → undo → tree verified restored. Includes a GUI smoke pass (launch offscreen, screenshot each screen).
 
 ## 14. Packaging
 
-Zero-dep core → `pipx install spacesage` or `python -m spacesage`. Windows single-file `spacesage.exe` via PyInstaller in the release workflow. MIT license. Semantic versioning + CHANGELOG.
+The app ships as a **windowed single-file executable** (`spacesage.exe` — PyInstaller; no console window; app icon + version info). Windows build in the release workflow; Linux smoke build in CI so the spec cannot rot. The engine stays `pip install spacesage`-able for headless/scripting use (no GUI deps). MIT license. Semantic versioning + CHANGELOG.
 
 ## 15. Roadmap (post-v0.1)
 
