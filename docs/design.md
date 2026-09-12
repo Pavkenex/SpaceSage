@@ -368,6 +368,84 @@ the factors behind its rank.  The decisions that became part of the engine:
 - **Move planning:** candidates matched to target drives the user picked, respecting `free_bytes − reserve_bytes` budgets. Directories get `JUNCTION` (no admin needed); files get `SYMLINK` (needs elevation or Developer Mode — flagged); `HARDLINK` only same-volume, never for cross-drive moves.
 - Ordering: T1 quarantine × gain desc, then moves, then compressions, then review/native.
 
+### 7.1 Plan notes (S5 findings)
+
+`spacesage/planner.py` composes the ranked candidates into that document. The
+decisions that became part of the contract:
+
+- **Every action carries the same keys** (`null` where a type has no use for one):
+  `id`, `type`, `kind` (the candidate kind it came from), `path`, `bytes`,
+  `category`, `tier`, `confidence`, `rationale`, `why`, `side_effects`,
+  `native_alt`, `dest`, `link_after`, `elevation_required`, `command`,
+  `covered_bytes`, `weak`. The executor and the GUI can read it without special
+  cases; `spacesage.planner.validate_plan` checks it (and the test suite runs the
+  rendered document through the validator). `why` is the one-line decision,
+  `rationale` the rule's own reason, `side_effects` a plain sentence about what
+  the action changes.
+- **`plan_id` is a function of the inputs**: `sha256:` over the canonical JSON of
+  `{schema, source, actions}` (sorted keys, no whitespace) — the wall-clock
+  `created` and the `provenance` block stay outside it, so re-planning the same
+  index, rules, targets and reference time reproduces the id exactly (the
+  committed golden pins one). Action ids are positional (`a1`, `a2`, … in plan
+  order) over a deterministic order, so they are stable for the same inputs;
+  the manifest binds to the *plan id*, which changes whenever an action does.
+- **`summary`** keeps the three contract keys and adds the rest:
+  `delete_bytes`, `move_bytes`, `compress_bytes` (in-place compression, upper
+  bound), `review_bytes` (`REVIEW` **and** `NATIVE`: everything not reclaimed by
+  SpaceSage), `native_bytes` (the `NATIVE` part of it), `planned_bytes`,
+  `covered_bytes`, `dropped` and a `by_type` breakdown. Every byte total is the
+  sum of the actions, so a reader can re-add the document.
+- **Only the classifier's advice becomes executable** and only at T1/T2:
+  `delete` candidates (advice `DELETE_QUARANTINE`) → quarantine actions;
+  `MOVE` advice → moves; `NATIVE` advice → `NATIVE` actions carrying the vendor
+  command (a launcher-managed library is moved by its launcher, not by us);
+  `COMPRESS_NTFS` advice → in-place compression. Everything else — `stale`,
+  `dupes-weak` (bytes unverified until the deep scan), `app` footprints,
+  `KEEP`/`REVIEW` advice and **any T3 path** — becomes a `REVIEW` item. An app
+  row's rationale keeps the advice of the biggest entry inside it, but acting on
+  a whole footprint is a human decision, so it is never executable; its vendor
+  command rides along in `native_alt`. **T3 is report-only** — no executable
+  action may carry it and the validator refuses such a document.
+- **Ordering is phase-based**: quarantines (T1 before T2, biggest gain first) →
+  moves (biggest first) → compressions → review items (biggest first) then
+  native ones. Within a phase the gain used for ranking is the action's *net*
+  bytes (what is left after everything already planned inside it), so the list
+  stays monotone in the numbers it prints.
+- **Move planning resolves what the UI caps.** A folder the rules matched is one
+  `MOVE` of the folder; a folder that only *grouped* its matching files is
+  re-read from the index and planned as one `MOVE` per file, so the
+  `max_members` display cap never truncates a plan, and a file the rules want
+  handled by a launcher keeps its `NATIVE` action even inside such a group.
+  Destinations mirror the source below `<target>\Moved`
+  (`C:\Users\a\Videos` → `D:\Moved\Users\a\Videos`), separator style following
+  the target (drive, UNC share or POSIX path).
+- **Budgets are strict, targets are predictable.** A target takes moves while
+  `bytes <= free_bytes − reserve_bytes` (`--free` states free space for drives
+  the machine cannot measure). Targets are tried in the order given, a target on
+  the source's own volume is never used (a move there frees nothing), the greedy
+  pass skips what does not fit and keeps going for smaller items, and a move
+  that fits nowhere is demoted to a `REVIEW` that names the number missing —
+  never dropped silently and never over-committed.
+- **Link policy** is exactly the design's: directories → `JUNCTION` (no admin);
+  files → `SYMLINK` when they leave the volume, with `elevation_required: true`
+  because Windows needs the privilege or Developer Mode for those; `HARDLINK`
+  only same-volume (and never as the result of a cross-drive move);
+  `--no-links` plans `NONE` and says the original path disappears.
+- **No double counting.** The ranked list may hold a folder and one of its
+  claimed children (a media folder plus a cache folder inside it): the earlier
+  action's bytes are subtracted from the later one's, `covered_bytes` records the
+  difference, and a candidate left with nothing to act on is dropped and counted
+  in `summary.dropped`. The same cascade reconciles app footprints that contain
+  planned quarantines.
+- **The Markdown generator** (`render_markdown`) is the report/chat rendering:
+  header (plan id, source, targets), a summary block, then one section per
+  action type with a line per action (path, destination and link, size, tier,
+  confidence, why, vendor alternative). `-o FILE` writes `plan.json`.
+- **CLI.** `spacesage plan [--db PATH] [--rules DIR] [--to DRIVE]… [--reserve
+  20G] [--free SIZE] [--min-size SIZE] [--top N] [--stale-after-days N]
+  [--dupes-min-copies N] [--no-links] [--json|-o FILE]`; read-only, prints the
+  Markdown summary by default.
+
 ## 8. Executor
 
 - `spacesage apply <plan.json> --approve <approved.json> [--execute]`.

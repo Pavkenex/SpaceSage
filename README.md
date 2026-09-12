@@ -42,13 +42,14 @@ uv run ruff format --check .   # formatting
 uv run mypy spacesage          # types (strict)
 ```
 
-The internal CLI (development/automation only) runs as `uv run python -m spacesage --version`, or via the installed `spacesage` console script. Three engine stages are available now:
+The internal CLI (development/automation only) runs as `uv run python -m spacesage --version`, or via the installed `spacesage` console script. Four engine stages are available now:
 
 ```sh
 uv run python -m spacesage ingest export.csv --db index.db   # --replace reloads, --progress reports to stderr
 uv run python -m spacesage stats --db index.db                # --by dir|ext|age|app, --top N, --json, --materialize
 uv run python -m spacesage classify --db index.db             # --rules DIR, --list-rules, --top N, --json, --materialize
 uv run python -m spacesage candidates --db index.db           # --kind …, --min-size 100M, --top N, --json
+uv run python -m spacesage plan --db index.db --to D: --reserve 20G -o plan.json   # --free SIZE, --no-links, --json
 ```
 
 `ingest` streams a WizTree export into the SQLite index; `stats` aggregates it (biggest directories and files, per-extension totals, age buckets, per-app footprints) from file rows only and reports folder-row disagreements as data-quality warnings. It is read-only unless `--materialize` is passed, which also rebuilds the derived `dir_sizes` / `app_footprints` tables for later stages.
@@ -56,6 +57,8 @@ uv run python -m spacesage candidates --db index.db           # --kind …, --mi
 `classify` runs the rule packs over every entry — built-in packs plus your own in `~/.config/spacesage/rules/` (`--rules DIR` to point elsewhere), shadowed by rule id — and prints per-tier / per-category counts and sizes plus the largest entries no rule recognised. It is read-only unless `--materialize` is passed, which writes the derived `categories` table (schema v3). Every rule carries a category, a risk tier, an action, a confidence and a plain-language rationale; see [`docs/rules.md`](docs/rules.md) to write your own.
 
 `candidates` turns those verdicts into the ranked opportunities list — biggest estimated win first, per action kind: `delete` (quarantine candidates), `move` (data to relocate, grouped at directory level), `stale` (big, cold entries to review), `dupes-weak` (same name **and** size; explicitly flagged as unverified) and `app` (the largest application footprints, each carrying the advice of its biggest matching folder or an explicit "no action" with the reason). Every row carries its tier, confidence, the plain-language why and the four score factors (`bytes × tier weight × confidence × recency`), so a rank can be re-derived by hand. It is read-only, and folder rows aggregate their descendants — a candidate that another, higher-priority kind already claimed is not listed twice.
+
+`plan` composes those candidates into the course of action (`plan.json`, schema `spacesage.plan/v1`): quarantines first (T1 before T2, biggest gain first), then moves onto the target drives you pick (`--to D:` per drive, each respecting `free_bytes − reserve`; `--free SIZE` states free space for drives this machine cannot measure), then compressions, then review and native-tool items. Directories move whole and get a junction back, files get a symlink flagged as needing elevation (or `--no-links` for no link at all), destinations mirror the source below `<target>\Moved`, and **T3 paths are never executable** — they stay review items. An app footprint whose advice is "delete the cache inside it" is a review item too; only what the rules actually told us to act on becomes an action. Byte totals never double count a folder and its children, and the whole document is deterministic: `plan_id` is a sha256 over the source and the action list, so re-planning the same index reproduces it exactly. It prints a Markdown summary (for reports and chat) and writes the JSON with `-o plan.json`. It is read-only.
 
 GUI dependencies arrive with the desktop-app slices — see [`docs/slices.md`](docs/slices.md) and [`docs/dev-environment.md`](docs/dev-environment.md).
 
