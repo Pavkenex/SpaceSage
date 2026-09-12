@@ -333,7 +333,7 @@ def test_injected_disagreement_raises_a_warning(tmp_path: Path) -> None:
 
     report = stats.stats_report(conn, now=NOW)
     text = stats.render_text(report)
-    assert "1 folder disagree" in text
+    assert "1 folder disagrees" in text
     assert "warning: C:\\Windows\\System32" in text
     payload = report.to_dict()
     quality = payload["data_quality"]
@@ -806,7 +806,7 @@ def test_cli_stats_warns_about_injected_disagreement(tmp_path: Path) -> None:
     ingest_csv(broken_fixture(tmp_path, "2048576"), db_path)
     result = run_cli("stats", "--db", str(db_path), "--by", "dir")
     assert result.returncode == 0, result.stderr
-    assert "1 folder disagree" in result.stdout
+    assert "1 folder disagrees" in result.stdout
     assert "warning: C:\\Windows\\System32" in result.stdout
 
     as_json = run_cli("stats", "--db", str(db_path), "--json")

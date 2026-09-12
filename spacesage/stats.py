@@ -1097,8 +1097,9 @@ def render_text(report: StatsReport, *, by: str | None = None) -> str:
 
     quality = report.quality
     if quality.warnings:
+        verb = "disagrees" if len(quality.warnings) == 1 else "disagree"
         lines.append(
-            f"data quality: {_plural(len(quality.warnings), 'folder')} disagree with file-row "
+            f"data quality: {_plural(len(quality.warnings), 'folder')} {verb} with file-row "
             f"sums (checked {_plural(quality.checked_dirs, 'folder')}, tolerance "
             f"{format_bytes(quality.tolerance_bytes)} / {quality.tolerance_ratio:.1%})"
         )
