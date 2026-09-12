@@ -268,6 +268,78 @@ decisions that became part of the engine:
   roll-ups, per-category sizes and the biggest unknown entries (the rule-author
   worklist).
 
+### 6.2 Candidate generation & scoring (S4 findings)
+
+`spacesage/candidates.py` turns the classifier's verdicts into the ranked
+**Opportunities** list (`docs/design.md` §9): per action kind, biggest
+estimated win first, every row carrying a suggested solution, its reasons and
+the factors behind its rank.  The decisions that became part of the engine:
+
+- **Five kinds.** `delete` (T1/T2 rules with action `DELETE_QUARANTINE` —
+  delete always means quarantine), `move` (entries the classifier told to
+  relocate), `stale` (big, cold and loosely classified: tier `T2` or unknown,
+  untouched for at least `stale_after_days`, default one year; advice-only,
+  `REVIEW`), `dupes-weak` (same name **and** size clusters) and `app` (the
+  largest application footprints).
+- **`move` follows the classifier, not a hard-coded category list**: an entry
+  is a relocation candidate when its advice is `MOVE` (media) or `NATIVE`
+  (launcher-managed game libraries) and its tier is T1/T2.  That keeps the
+  advice in one place — the rule packs — and automatically excludes T3
+  (`WinSxS`, OneDrive) and `REVIEW`-only categories (`disk-image`).
+- **Files group at directory level.**  A folder the rules matched is a single
+  candidate that swallows its matching files (a 1.3 GiB `Videos` folder is one
+  row, not three).  Files with no matching folder are grouped by their parent
+  directory into one candidate per folder, carrying its largest members (capped
+  at `max_members`, default 10), the strictest tier, the *minimum* confidence
+  and the *newest* member's age — a group with one recently written file counts
+  as recent.  `--min-size` therefore applies to the group total, not to every
+  file in it: twenty 80 MiB videos are one 1.6 GiB candidate.
+- **Scoring is deterministic and explainable**:
+  `score = bytes × tier weight × confidence × recency factor`, with tier
+  weights `T1 1.0 / T2 0.6 / T3 0.2`, the classifier's confidence, and a
+  recency factor that is `0.5` inside 30 days, rises linearly to `1.0` at 365
+  days and is `0.75` when the timestamp is unknown (no timestamp is neither
+  fresh nor provably cold).  Every candidate carries the four factors plus the
+  age they were computed from, so a rank can be re-derived without the engine.
+- **`stale` never guesses.**  It only fires for entries the classifier left at
+  `T2` or unknown; a matched `T3` (`KEEP`, `NATIVE`, system data) is a
+  deliberate "leave it alone", not a review item, and an entry without a
+  timestamp is never "old".
+- **`dupes-weak` is weak by construction.**  Name + size agreement is not
+  evidence of identical bytes, so the cluster carries `weak = true`, action
+  `REVIEW`, confidence 0.3, and `bytes` = the *recoverable* copies
+  (`(n-1) × size`, with `member_bytes` showing the combined total).  Hard-linked
+  copies are excluded (their payload is already accounted for) and so is
+  anything under `dupes_floor` (1 MiB) or under `--min-size` once the
+  recoverable total is known.  The hash-verified material is the deep scan
+  (S6); these rows exist so the user knows the cluster is there.
+- **`app` rows carry the advice of the app's biggest matched entry.**  The S2
+  heuristic names the app, the largest matching entry inside it speaks for it
+  (a Chrome cache ⇒ `DELETE_QUARANTINE`; the `Program Files` catch-all ⇒
+  `KEEP`, i.e. the explicit *No action* with its reason), and an app with no
+  matching entry at all is an explicit `REVIEW` with "no rule matched".
+- **No double counting.**  Within a kind, a candidate inside another candidate
+  is dropped (folder rows aggregate their descendants).  Across kinds, a path
+  claimed by a higher-priority kind (delete → move → stale → dupes-weak → app)
+  is not listed again, and a duplicate cluster moves to the first copy no other
+  kind claimed (or disappears when all its copies are covered).  A *folder*
+  candidate that contains claimed entries stays listed — the two rows describe
+  different decisions and the plan's selection cascade reconciles them — and
+  the report counts every suppressed row.  The exported roots (`C:\`) are never
+  candidates, and hard-linked copies are skipped because they free nothing on
+  their own.
+- **Read-only and streaming.**  One pass over `entries` (the classifier
+  iterator) plus one folder pass for the app footprints when that kind is
+  requested; only the best `top × 10` candidates per kind are kept in memory
+  before collapsing (the buffer leaves room for nested rows to drop out), so
+  the lists stay bounded on a 20M-row export.  `--top 0` keeps every candidate,
+  and the report says how many were found below the buffer (`found` vs `total`)
+  instead of pretending they were suppressed.
+- **CLI.**  `spacesage candidates [--db PATH] [--rules DIR] [--kind KIND]…
+  [--min-size SIZE] [--top N] [--stale-after-days N] [--dupes-min-copies N]
+  [--json]`; `--kind` limits which kinds are *generated*, so the omitted kinds
+  cannot claim paths from the listed ones.
+
 ## 7. Plan schema (plan.json v1) — the contract
 
 ```json
