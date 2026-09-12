@@ -16,7 +16,16 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from spacesage import __version__, candidates, db, deepscan, planner, rules, stats
+from spacesage import (
+    __version__,
+    candidates,
+    db,
+    deepscan,
+    executor,
+    planner,
+    rules,
+    stats,
+)
 from spacesage.ingest import IngestError, IngestProgress, RunStats, ingest_csv
 
 PROG = "spacesage"
@@ -376,6 +385,89 @@ def build_parser() -> argparse.ArgumentParser:
         help="write plan.json to FILE ('-' writes it next to stdout as well)",
     )
     plan_parser.set_defaults(handler=_run_plan)
+
+    apply_parser = subparsers.add_parser(
+        "apply",
+        help="execute an approved plan (dry-run unless --execute)",
+        description=(
+            "Execute the actions a human approved: the manifest must bind to this "
+            "plan's own plan_id and may only name action ids the plan has. Without "
+            "--execute the run is a DRY RUN: every approved action is resolved to the "
+            "exact operation it would perform (quarantine destination, move "
+            "destination, link) and nothing on disk is touched. Executing re-validates "
+            "each op against the live filesystem (exists, not a link, not locked, "
+            "destination free), verifies every payload after the move, and journals "
+            "each step before and after it runs so 'spacesage undo' can reverse it."
+        ),
+    )
+    apply_parser.add_argument("plan", metavar="PLAN", type=Path, help="plan.json to apply")
+    apply_parser.add_argument(
+        "--approve",
+        metavar="FILE",
+        type=Path,
+        required=True,
+        help="approved.json: the action ids a human approved for this plan_id",
+    )
+    apply_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="perform the operations (default: dry run, nothing is touched)",
+    )
+    apply_parser.add_argument(
+        "--journal",
+        metavar="FILE",
+        type=Path,
+        default=None,
+        help=(
+            "journal to append to; default: spacesage.journal.jsonl next to the plan. "
+            "Execution refuses to run without one"
+        ),
+    )
+    apply_parser.add_argument(
+        "--quarantine",
+        metavar="DIR",
+        type=str,
+        default=None,
+        help=(
+            "quarantine store root (default: _spacesage_quarantine on the source's "
+            "own volume, so a quarantine stays a rename)"
+        ),
+    )
+    apply_parser.add_argument(
+        "--within",
+        action="append",
+        type=str,
+        default=[],
+        metavar="DIR",
+        help="refuse every action outside this root (repeatable; sandboxing)",
+    )
+    apply_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the run report as JSON (spacesage.executor/v1)",
+    )
+    apply_parser.set_defaults(handler=_run_apply)
+
+    undo_parser = subparsers.add_parser(
+        "undo",
+        help="reverse a journal, newest operation first",
+        description=(
+            "Reverse every operation the journal still shows as pending, newest "
+            "first (the link before the move that created it, the move before the "
+            "quarantine it followed) and verify each payload against the digest the "
+            "journal recorded on the way in. Operations that were already reversed "
+            "are skipped, so running undo twice is safe."
+        ),
+    )
+    undo_parser.add_argument(
+        "journal", metavar="JOURNAL", type=Path, help="the JSONL journal to reverse"
+    )
+    undo_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the undo report as JSON (spacesage.undo/v1)",
+    )
+    undo_parser.set_defaults(handler=_run_undo)
     return parser
 
 
@@ -700,6 +792,43 @@ def _run_plan(args: argparse.Namespace) -> int:
         return 0
     finally:
         conn.close()
+
+
+def _run_apply(args: argparse.Namespace) -> int:
+    try:
+        plan = executor.load_plan(args.plan)
+        manifest = executor.load_manifest(args.approve)
+        report = executor.apply_plan(
+            plan,
+            manifest,
+            execute=bool(args.execute),
+            journal=args.journal,
+            quarantine_root=args.quarantine,
+            within=tuple(args.within),
+            plan_path=args.plan,
+            manifest_path=args.approve,
+        )
+    except executor.ExecutorError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        json.dumps(report.to_dict(), indent=2) + "\n" if args.json else report.render_text(),
+        end="",
+    )
+    return 0 if report.ok() else 1
+
+
+def _run_undo(args: argparse.Namespace) -> int:
+    try:
+        report = executor.undo_journal(args.journal)
+    except executor.ExecutorError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        json.dumps(report.to_dict(), indent=2) + "\n" if args.json else report.render_text(),
+        end="",
+    )
+    return 0 if report.ok() else 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:

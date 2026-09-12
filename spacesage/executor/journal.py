@@ -321,7 +321,6 @@ class JournalWriter:
                 "verify": "",
                 "notes": [],
                 "before": before.to_dict() if before is not None else None,
-                "after": None,
             }
         )
         return seq
@@ -365,7 +364,6 @@ class JournalWriter:
                 "verify": verify,
                 "notes": list(notes),
                 "command": list(command),
-                "before": None,
                 "after": after.to_dict() if after is not None else None,
             }
         )

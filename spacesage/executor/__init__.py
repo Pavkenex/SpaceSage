@@ -469,11 +469,15 @@ def _under_targets(dest: str, plan_data: Mapping[str, object]) -> bool:
 
 
 def _step_summary(steps: Sequence[Step]) -> str:
-    """The sentence the report shows for the action (the worst step speaks)."""
-    for step in steps:
-        if step.outcome not in ("done", "planned"):
-            return step.reason
-    return steps[-1].reason if steps else "nothing to do"
+    """The sentence the report shows for the action (the worst step speaks).
+
+    When every step is fine the reasons are joined, so a move that also created
+    the link reads as "renamed (same volume); symlink created -> D:\\Moved\\x".
+    """
+    trouble = [step for step in steps if step.outcome not in ("done", "planned")]
+    if trouble:
+        return trouble[0].reason
+    return "; ".join(dict.fromkeys(step.reason for step in steps if step.reason))
 
 
 # --------------------------------------------------------------------------- #
@@ -599,7 +603,8 @@ class _Runner:
                     op="link",
                     outcome="planned",
                     reason=(
-                        f"create a {link_label(resolved.link)} at {action.path} -> {resolved.dest}"
+                        f"link the original path back as a {link_label(resolved.link)}: "
+                        f"{action.path} -> {resolved.dest}"
                     ),
                     src=action.path,
                     dest=resolved.dest,
@@ -613,11 +618,7 @@ class _Runner:
         if resolved.op == "quarantine":
             return f"quarantine {action.path} -> {resolved.dest}"
         if resolved.op == "move":
-            link = resolved.link or "NONE"
-            suffix = (
-                "" if link == "NONE" else f", then link the original path back ({link_label(link)})"
-            )
-            return f"move {action.path} -> {resolved.dest}{suffix}"
+            return f"move {action.path} -> {resolved.dest}"
         if resolved.op == "compress":
             return f"compress {action.path} in place (NTFS)"
         return f"nothing to execute for {action.path}"
@@ -647,7 +648,9 @@ class _Runner:
             if error is not None:
                 return self._fail(resolved, f"cannot create the quarantine store {store}: {error}")
         before = self._digest(resolved.action.path)
-        seq = self._start_op(resolved, op="quarantine", reason=f"quarantine {resolved.action.path}")
+        seq = self._start_op(
+            resolved, op="quarantine", reason=f"quarantine {resolved.action.path}", before=before
+        )
         primitive = self.backend.move(self._os(resolved.action.path), self._os(dest))
         step = self._finish_move(
             resolved, seq=seq, op="quarantine", before=before, primitive=primitive
@@ -672,7 +675,9 @@ class _Runner:
             if link == "NONE"
             else ()
         )
-        seq = self._start_op(resolved, op="move", reason=f"move {resolved.action.path} -> {dest}")
+        seq = self._start_op(
+            resolved, op="move", reason=f"move {resolved.action.path} -> {dest}", before=before
+        )
         primitive = self.backend.move(self._os(resolved.action.path), self._os(dest))
         move_step = self._finish_move(
             resolved,
