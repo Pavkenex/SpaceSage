@@ -156,6 +156,47 @@ Verified against the format contract and exercised by the committed fixtures
   `source.exported`, `source.machine`, `ingest.*` counters/bytes), giving later
   slices the dataset identity they need for caching and dataset locking.
 
+### 5.2 Stats notes (S2 findings)
+
+The `stats` stage (`spacesage/stats.py`) answers *where do the bytes live?* and
+is the shared vocabulary later slices (rules, candidates, planner, GUI) build
+on. Decisions that are now part of the data model:
+
+- **Every byte total comes from file rows.** Folder rows are read *only* for
+  the cross-check: each folder's verbatim `Size` is compared with the sum of
+  its descendant file rows, and a disagreement beyond
+  `max(4 KiB, 0.1 % of the exported total)` is reported as a
+  `CrossCheckWarning` (the report shows them, the GUI can surface them, and a
+  large spike means the export was taken while the disk was changing).
+  Folder rows are never summed with their children.
+- **Hardlink-aware totals.** `db.index_summary().unique_file_bytes` /
+  `unique_allocated_bytes` credit a hard-linked group to its unflagged source;
+  upstream (WizTree) marks only the *copies*, so an export whose every member
+  is flagged would under-count (not observed in practice). `unique_*` values
+  in the dir/extension/age/app views follow exactly the same rule.
+- **Age buckets** are `<7d / 7-30d / 30-90d / 90-365d / >1y / unknown`
+  (`mtime` at a caller-supplied `now`; future timestamps land in the youngest
+  bucket, a missing timestamp in `unknown`). Age arithmetic uses the stored
+  epoch, i.e. the documented "export timestamps are UTC" assumption.
+- **Per-app heuristic.** Applications are the direct children of the folders
+  ending in `AppData\Local`, `AppData\Roaming`, `Program Files` or
+  `Program Files (x86)` (case-insensitive, component-wise, both separators).
+  Footprints of the same name are merged across roots, users and spellings —
+  `C:\Program Files\Chrome` + `C:\Users\a\AppData\Local\Chrome` +
+  `c:\users\b\appdata\local\chrome` are one `Chrome`; the spelling with the
+  most bytes names the row. Files directly under an app root are not
+  attributed (they still count in the dir/ext/age views), and a folder
+  without any app root yields no apps — the heuristic never guesses.
+- **Materialised views.** Schema v2 holds `dir_sizes` (one row per folder,
+  cascaded away with its entry) and `app_footprints` (name-keyed, roots as a
+  JSON array), rebuilt by `stats.build_derived()` in one streaming pass. The
+  report itself never reads them — it always recomputes from `entries`, so
+  they can never drift into the numbers (the CLI writes them only with
+  `--materialize`, keeping plain `spacesage stats` read-only).
+- **Scale.** One streaming pass, memory bounded by the folder count plus the
+  requested top-N; the 30 k-folder / 207 k-file synthetic export reports in
+  ~1.3 s (vs ~11 s to ingest it).
+
 ## 6. Rule packs (TOML)
 
 TOML via stdlib `tomllib` (comments allowed, no extra dep). Built-ins in `spacesage/rules/`; user overrides in `~/.config/spacesage/rules/` shadow by `id`.

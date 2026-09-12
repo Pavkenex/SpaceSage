@@ -41,11 +41,14 @@ uv run ruff format --check .   # formatting
 uv run mypy spacesage          # types (strict)
 ```
 
-The internal CLI (development/automation only) runs as `uv run python -m spacesage --version`, or via the installed `spacesage` console script. The first engine stage — streaming a WizTree CSV export into the SQLite index — is available now:
+The internal CLI (development/automation only) runs as `uv run python -m spacesage --version`, or via the installed `spacesage` console script. Two engine stages are available now:
 
 ```sh
 uv run python -m spacesage ingest export.csv --db index.db   # --replace reloads, --progress reports to stderr
+uv run python -m spacesage stats --db index.db                # --by dir|ext|age|app, --top N, --json, --materialize
 ```
+
+`ingest` streams a WizTree export into the SQLite index; `stats` aggregates it (biggest directories and files, per-extension totals, age buckets, per-app footprints) from file rows only and reports folder-row disagreements as data-quality warnings. It is read-only unless `--materialize` is passed, which also rebuilds the derived `dir_sizes` / `app_footprints` tables for later stages.
 
 GUI dependencies arrive with the desktop-app slices — see [`docs/slices.md`](docs/slices.md) and [`docs/dev-environment.md`](docs/dev-environment.md).
 
