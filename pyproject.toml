@@ -28,9 +28,14 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+gui = [
+    "PySide6>=6.8",
+]
 dev = [
     "mypy>=1.11",
     "pytest>=8.0",
+    "pytest-qt>=4.4",
+    "PySide6>=6.8",
     "pyyaml>=6.0",
     "ruff>=0.9",
 ]
@@ -42,15 +47,25 @@ build = [
 # uv installs the `dev` group by default on `uv run` / `uv sync`, so the dev
 # tooling needs no extra flags there. `pip install -e '.[dev]'` uses the extra
 # above instead. Keep the two lists in sync.
+#
+# PySide6 sits in both on purpose: `uv run pytest` (and CI) must be able to run
+# the GUI suite, and `pip install 'spacesage[gui]'` must be able to run the app.
+# The engine itself stays stdlib-only; [gui] is the desktop app's only extra.
 dev = [
     "mypy>=1.11",
     "pytest>=8.0",
+    "pytest-qt>=4.4",
+    "PySide6>=6.8",
     "pyyaml>=6.0",
     "ruff>=0.9",
 ]
 
 [project.scripts]
 spacesage = "spacesage.cli:main"
+
+[project.gui-scripts]
+# The product surface: a windowed app (no console window on Windows).
+spacesage-app = "spacesage.app:main"
 
 [tool.hatch.version]
 # Single source of truth for the version: spacesage/__init__.py
