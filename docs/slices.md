@@ -14,8 +14,9 @@ Ordered, dependency-chained slices. Each slice is one kanban task on the `spaces
 | S5 | Plan generator: plan.json v1, budgets, link policy, goldens | S4 |
 | S6 | Deep scan: exact duplicate groups (live filesystem, hash-based) | S5 |
 | S7 | Executor + undo: quarantine, robocopy/mklink, journal, undo | S6 |
-| S8 | GUI shell: PySide6 app window, import wizard, dashboard, theme (offscreen screenshots in CI) | S7 |
-| S9 | GUI planning: suggestions view, plan review, dry-run preview, execute + undo views | S8 |
-| S10 | AI assists: optional OpenAI-compatible layer wired into the UI | S9 |
-| S11 | Packaging & docs: windowed single-file exe, app guide with real screenshots | S10 |
+| S8 | GUI shell: PySide6 app window, import wizard, dashboard; design tokens + light/dark theme (offscreen screenshots in CI) | S7 |
+| S9 | GUI planning: suggestions, plan review, dry-run preview, execute + undo views; polish pass (empty states, toasts, badges) | S8 |
+| S10 | AI engine: OpenAI-compatible client (streaming, multi-provider), prompts + schemas, guardrails, cache, cost meter, conversation store | S9 |
+| S10b | AI assistant: docked chat panel, explain/review/ask surfaces, provider management, rule promotion (UI) | S10 |
+| S11 | Packaging & docs: windowed single-file exe, app guide with real screenshots | S10b |
 | S12 | E2E verification + v0.1.0 (engine pipeline + GUI smoke pass) | S11 |
