@@ -50,7 +50,7 @@ import os
 import stat
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from spacesage.stats import format_bytes
@@ -1087,12 +1087,6 @@ def scan(
             hardlink_sets.append(item)
     groups.sort(key=lambda group: (-group.reclaimable_bytes, -group.size, group.keep))
     hardlink_sets.sort(key=lambda item: (-item.linked_bytes, -item.size, item.keep))
-    numbered_groups = tuple(
-        _renumber_group(group, index) for index, group in enumerate(groups, start=1)
-    )
-    numbered_sets = tuple(
-        _renumber_set(item, index) for index, item in enumerate(hardlink_sets, start=1)
-    )
     report = ScanReport(
         roots=normalized,
         notes=tuple(notes),
@@ -1101,48 +1095,15 @@ def scan(
         as_of=int(now if now is not None else time.time()),
         elapsed_s=time.monotonic() - started,
         stats=scanner.stats(),
-        groups=numbered_groups,
-        hardlink_sets=numbered_sets,
+        groups=tuple(
+            replace(group, group_id=f"g{index}") for index, group in enumerate(groups, start=1)
+        ),
+        hardlink_sets=tuple(
+            replace(item, set_id=f"h{index}") for index, item in enumerate(hardlink_sets, start=1)
+        ),
     )
-    scanner._emit("done", normalized[-1] if normalized else "")
+    scanner._emit("done", normalized[-1])
     return report
-
-
-def _renumber_group(group: DuplicateGroup, index: int) -> DuplicateGroup:
-    if group.group_id == f"g{index}":
-        return group
-    return DuplicateGroup(
-        group_id=f"g{index}",
-        size=group.size,
-        copies=group.copies,
-        paths=group.paths,
-        reclaimable_bytes=group.reclaimable_bytes,
-        linked_bytes=group.linked_bytes,
-        sha256=group.sha256,
-        partial_sha256=group.partial_sha256,
-        keep=group.keep,
-        keep_policy=group.keep_policy,
-        keep_reason=group.keep_reason,
-        members=group.members,
-        hardlink=group.hardlink,
-    )
-
-
-def _renumber_set(item: HardlinkSet, index: int) -> HardlinkSet:
-    if item.set_id == f"h{index}":
-        return item
-    return HardlinkSet(
-        set_id=f"h{index}",
-        size=item.size,
-        paths=item.paths,
-        linked_bytes=item.linked_bytes,
-        sha256=item.sha256,
-        partial_sha256=item.partial_sha256,
-        keep=item.keep,
-        keep_policy=item.keep_policy,
-        keep_reason=item.keep_reason,
-        members=item.members,
-    )
 
 
 # --------------------------------------------------------------------------- #
