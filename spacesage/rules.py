@@ -1339,7 +1339,7 @@ def classify_report(
 
     summaries = sorted(
         (item.summary() for item in categories.values()),
-        key=lambda item: (-max(item.file_bytes, item.dir_bytes), -item.entries, item.category),
+        key=lambda item: (-item.file_bytes, -item.dir_bytes, item.category),
     )
     tier_summaries = tuple(tiers[tier].summary() for tier in TIERS if tier in tiers) + tuple(
         tiers[tier].summary() for tier in sorted(tiers) if tier not in TIERS
