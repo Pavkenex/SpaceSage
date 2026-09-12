@@ -68,7 +68,40 @@ uv run python -m spacesage undo spacesage.journal.jsonl                       # 
 
 `apply` is the only stage that touches the disk, and it only ever touches what a human approved. It takes `plan.json` plus an `approved.json` manifest (`{schema, plan_id, approved: [a1, …]}`) that is bound to that plan's `plan_id`: a manifest for another plan, or one naming an action id the plan does not have, is refused before anything is resolved. Without `--execute` it is a **dry run** — every approved action is resolved into the exact operation it would perform (where the quarantine goes, where the move lands, which link keeps the old path alive) and nothing is created, moved or written. Executing re-validates each item against the live filesystem first (still there? still a real folder and not a symlink that appeared meanwhile? not locked? destination still free? not a volume root, system folder or profile root?), verifies every payload by digest once it has landed, and skips-with-a-reason anything that doesn't hold — a locked file is never yanked, and a symlink that can't be created is discovered *before* the move, so no path is left dangling. "Delete" always means **quarantine**: a same-volume move into `_spacesage_quarantine/<plan token>/…` with an audit `manifest.json` in the store (the bytes are still there — purging is a later, separate decision). Everything is appended to a JSONL journal in two phases (before *and* after each primitive, with digests), which is what makes `spacesage undo` real: it reverses the operations newest first — the link before the move, the move before the quarantine — verifying each payload against the digest recorded on the way in, and reports "nothing to undo" if you run it twice. Windows uses `robocopy /MOVE /E /COPYALL` (ACL-preserving, with `shutil.move` as the fallback) and `mklink /J` junctions; POSIX uses `shutil.move` and symlinks. See [`docs/design.md`](docs/design.md) §8.
 
-GUI dependencies arrive with the desktop-app slices — see [`docs/slices.md`](docs/slices.md) and [`docs/dev-environment.md`](docs/dev-environment.md).
+Plan & execute views, AI suggestions and packaging are the remaining desktop slices — see [`docs/slices.md`](docs/slices.md).
+
+## Desktop app (the product surface)
+
+The product is the PySide6 window, not the CLI. Engine first, then the window: `[gui]` is the app's only extra (`PySide6>=6.8`), and the engine stays stdlib-only.
+
+```sh
+uv sync                       # dev extras include PySide6 + pytest-qt
+uv run python -m spacesage.app               # source run (also: the `spacesage-app` script)
+uv run python -m spacesage.app --self-check  # Qt/platform probe, exits 0
+```
+
+On a bare Linux box the Qt runtime libraries are required (`libegl1 libgl1 libglvnd0 libxkbcommon0`); in this project's dev container source the helper first (`source scripts/gui-env.sh` — vendored GL libs + `QT_QPA_PLATFORM=offscreen`, see [`docs/dev-environment.md`](docs/dev-environment.md)). If Qt cannot start, the app says so in a real dialog (zenity/kdialog/xmessage) instead of dying with a stack trace.
+
+**Screen 1 — Import.** Drop a WizTree CSV (or browse for it), pick the target drive, the free-space reserve and the smallest entry worth listing, then *Analyze*. The engine runs on a worker thread and reports rows/sec while it reads; the UI never blocks.
+
+**Screen 2 — Opportunities (the core).** One table of files *and* folders, biggest estimated gain first:
+
+- columns: select | path (mono) | size | est. gain | suggested solution (badge + one-line why) | tier | confidence;
+- folder rows aggregate their descendants, and checking a folder *covers* its contents — the cascade keeps at most one row per branch, so no byte is counted twice;
+- filters for state / tier / category / size, plus search, bulk select and a summary strip (totals, drives, per-state gain);
+- **"No action" rows are never hidden**: an entry the rules deliberately leave alone renders with its reason, because that is a decision, not a gap;
+- the details pane carries the full reasoning, side effects, alternatives and the move-destination editor.
+
+Everything the screens show comes from `spacesage/opportunities.py` (rows, filters, cascade, summary) — a Qt-free view-model over the engine; the widgets hold no SQL and the engine never runs on the UI thread.
+
+GUI tests are pytest-qt on Qt's offscreen platform (no display needed) and include the screenshot renders:
+
+```sh
+source scripts/gui-env.sh && uv run pytest         # engine + GUI suites
+uv run pytest tests/gui -q                         # just the desktop app
+```
+
+The renders land in `artifacts/gui/` (`import.png`, `opportunities.png`, `details.png`, plus the dark-theme variant) and are asserted to be real paints, not blank frames.
 
 ## License
 

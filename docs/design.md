@@ -51,6 +51,7 @@ spacesage/
   stats.py            # aggregates: dir/ext/age/app, top-N
   rules.py            # TOML rule packs, matcher, tiers
   candidates.py       # delete/move/stale/dupe/app candidate generation + scoring
+  opportunities.py    # the ranked list the GUI shows: rows, filters, folder cascade, summary
   planner.py          # plan.json v1 generation (the course of action)
   deepscan.py         # optional live hash scan (exact duplicates)
   models.py           # dataclasses: Entry, Drive, Action, Plan, …
@@ -68,11 +69,17 @@ spacesage/
     guardrails.py     # schema validation, dataset locking, caching, cost meter
   app/                # ── THE PRODUCT: PySide6 desktop application ──
     __init__.py
-    main.py           # QApplication bootstrap (python -m spacesage.app)
-    windows.py        # main window, navigation, status bar
-    views/            # import wizard, dashboard, suggestions, plan/execute, undo, settings
-    models/           # QAbstractTableModel view-models over the engine
-    assets/           # icons, theme resources
+    __main__.py       # python -m spacesage.app
+    main.py           # QApplication bootstrap; probes Qt in a subprocess (no-Qt dialog)
+    windows.py        # main window, navigation rail, status bar, plan/settings placeholders
+    theme.py          # the one token set: light/dark, spacing, type scale, semantic colors
+    models.py         # QAbstractTableModel view-model + hand-painted badge/chip delegates
+    state.py          # user settings: theme, target drive, reserve, last export/index
+    widgets.py        # metric cards, badges, toasts, empty states, drop zone
+    workers.py        # ingest + rank on a QThread -- the UI thread never blocks
+    icons.py          # bundled Lucide SVG subset, recoloured per theme
+    views/            # import wizard, opportunities + details pane, plan, settings
+    assets/           # Lucide SVGs + ATTRIBUTION.md (ISC license)
   rules/*.toml        # built-in rule packs
 tests/
   fixtures/gen.py     # synthetic WizTree CSV generator (incl. "full disk" scenario)
@@ -612,8 +619,20 @@ The product is the GUI (PySide6 widgets). One window, left navigation, four area
 - **Accessibility:** full keyboard navigation with visible focus states; contrast-safe in both themes; scalable text; labels on every input and icon-only button.
 - **AI surfaces:** inline where decisions happen — the **Suggested solution** column in the ranked list, a details pane with reasoning/alternatives and one-shot "Explain with AI", "Review plan" annotations, and "Apply as rule" on classifications. **No chat surface** — suggestions render next to the items they concern.
 
-## 10. AI assist layer (optional) — see research doc
+### 9.2 Desktop app notes (S8 findings)
 
+Decisions the GUI slices after this one have to keep — each of them was a real defect first:
+
+- **A token is one unit everywhere: pixels.** The stylesheet says `font-size: 13px`, so a `QFont` built with `QFont(family, 13)` (points, ~17px at 96 dpi) silently renders 33% larger than the token and the dense table elides half its text. `theme.ui_font`/`mono_font` use `setPixelSize(TYPE_SCALE[...])`.
+- **A badge is `text width + BADGE_PADDING`.** Pill text is centred in `rect.adjusted(BADGE_PADDING // 2, …)`, so a pill sized `text + 4` clips the first and last glyph (a `T2` chip painted as `2`). The solution, tier and confidence delegates all size with the constant.
+- **The widgets speak paths; the engine speaks keys.** `Opportunity.key` is the case-folded comparison key, but callers hold the path the export carries. `index_of` / `toggle` / `set_checked` normalise through `opportunities.path_key` at that boundary (idempotent), so no caller has to know which form it has.
+- **One line, one message.** `row.why` reads `"<action label>: <rationale>"` and the badge already carries the label; the delegate paints the rationale alone and drops it — never squeezes it — below `MIN_WHY` px.
+- **Qt is probed in a subprocess.** A missing `libEGL.so.1` aborts the process before a single widget exists, so `--self-check` runs in a child and the parent can still show a real dialog (zenity/kdialog/xmessage) instead of a traceback.
+- **Motion is bound to its widget.** The fade's safety timer passes the widget as context object, so a closed window is never repainted by a stale timer — this is the "Internal C++ object already deleted" that pytest-qt's exception capture reports at the *next* test.
+- **The list is honest by construction.** `spacesage/opportunities.py` adds the biggest `KEEP`/unmatched entries as `no_action` / `undecided` rows, so the screen never hides what SpaceSage will not touch, and the summary strip counts only rows no other listed row already covers.
+- **Screenshots are tests.** `tests/gui/test_screenshots.py` renders the real widgets at 1440×900 offscreen and asserts each render is not a blank frame; the PNGs in `artifacts/gui/` are the same renders the acceptance evidence uses.
+
+## 10. AI assist layer (optional) — see research doc
 Verdict (details in [`research/ai-and-alternatives.md`](research/ai-and-alternatives.md)): **hybrid**, and the AI's headline job is the per-item **suggested solution**: for every entry the rules don't decide, the AI system proposes a course of action — or an explicit *No action* when nothing can safely be done. The list is ranked by gain, so the biggest wins surface first with their remedy attached.
 
 **Capabilities (each bounded, schema-validated, dataset-locked):**
