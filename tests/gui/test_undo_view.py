@@ -207,6 +207,26 @@ def test_the_default_check_state_is_every_pending_operation(tmp_path: Path, qtbo
     assert "Nothing checked" in view.selection_label.text()
 
 
+def test_space_checks_the_operation_under_the_cursor(tmp_path: Path, qtbot: object) -> None:
+    """Keyboard: Space checks or unchecks the operation the cursor is on (§9.1)."""
+    _result, root, _journal, _pristine = prepared(tmp_path)
+    view = open_view(root, qtbot)
+    model = view.table_model()
+    table = view.table()
+    model.clear_checks()
+    assert model.checked_seqs() == ()
+
+    first = model.pending_seqs()[0]
+    table.setCurrentIndex(model.index_of(first))
+    qtbot.keyClick(table, Qt.Key.Key_Space)  # type: ignore[attr-defined]
+    assert model.checked_seqs() == (first,)
+    assert view.revert_selected_button.isEnabled()
+
+    qtbot.keyClick(table, Qt.Key.Key_Space)  # type: ignore[attr-defined]
+    assert model.checked_seqs() == ()
+    assert not view.revert_selected_button.isEnabled()
+
+
 # --------------------------------------------------------------------------- #
 # Reverting
 # --------------------------------------------------------------------------- #

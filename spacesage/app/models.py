@@ -84,6 +84,38 @@ def solution_tone(row: opportunities.Opportunity) -> str:
     }.get(row.action, "muted")
 
 
+def fitted_width(sample: str, *, mono: bool = True, padding: int | None = None) -> int:
+    """A column width that fits ``sample`` instead of eliding it mid-value.
+
+    The numeric columns carry labels, not bare numbers ("up to 1023.9 GiB"), so a
+    width narrower than the text turns a value into "up to …0 MiB" -- a number the
+    user cannot read.  Measuring the font the cells actually use keeps the column
+    honest at every theme and DPI (design §9.1).
+    """
+    font = theme.mono_font("sm") if mono else theme.ui_font("sm")
+    gap = theme.SPACE["sm"] if padding is None else padding
+    return QFontMetrics(font).horizontalAdvance(sample) + 2 * gap
+
+
+def elide_words(text: str, width: int, metrics: QFontMetrics) -> str:
+    """Fit ``text`` into ``width``, ending on a word boundary whenever there is one.
+
+    A why-line cut mid-word ("No rule matched t…") reads as a rendering defect;
+    cut at the last complete word it reads as a short sentence, and the full text
+    is one tooltip away (design §9.1).
+    """
+    if width <= 0:
+        return ""
+    if metrics.horizontalAdvance(text) <= width:
+        return text
+    words = text.split()
+    for count in range(len(words) - 1, 0, -1):
+        candidate = " ".join(words[:count]) + "…"
+        if metrics.horizontalAdvance(candidate) <= width:
+            return candidate
+    return metrics.elidedText(text, Qt.TextElideMode.ElideRight, width)
+
+
 class OpportunityTableModel(QAbstractTableModel):
     """Qt view-model over a ranked list (design §9, screen 2)."""
 
@@ -535,9 +567,7 @@ class SolutionDelegate(QStyledItemDelegate):
         painter.drawText(
             remaining,
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-            painter.fontMetrics().elidedText(
-                why_without_label(row), Qt.TextElideMode.ElideRight, remaining.width()
-            ),
+            elide_words(why_without_label(row), remaining.width(), painter.fontMetrics()),
         )
         painter.restore()
 

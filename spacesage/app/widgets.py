@@ -7,17 +7,27 @@ accessibility rules hold without each screen re-implementing them.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent
+from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDropEvent,
+    QKeyEvent,
+    QResizeEvent,
+    QTextCursor,
+    QTextOption,
+)
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QTableView,
     QVBoxLayout,
     QWidget,
 )
@@ -160,6 +170,113 @@ def mono_label(text: str, parent: QWidget | None = None) -> QLabel:
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     label.setWordWrap(True)
     return label
+
+
+class ElidedLabel(QLabel):
+    """A single-line label that elides instead of clipping.
+
+    A workspace path or a plan id is longer than any row it sits in, and a plain
+    ``QLabel`` simply paints past its edge: the user reads half a path with no
+    sign that anything is missing (design §9.1).  This one keeps the full text
+    available (``full_text()``) and elides to the width it was given -- middle
+    for a path, where the tail is the part that identifies it, right for a
+    sentence.
+    """
+
+    def __init__(
+        self,
+        text: str = "",
+        parent: QWidget | None = None,
+        *,
+        mode: Qt.TextElideMode = Qt.TextElideMode.ElideMiddle,
+    ) -> None:
+        super().__init__("", parent)
+        self._full = text
+        self._mode = mode
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setMinimumWidth(80)
+        self.setText(text)
+
+    def setText(self, text: str) -> None:
+        """Set the full text; what is painted is elided to the current width."""
+        self._full = text
+        super().setText(self._fitted())
+
+    def full_text(self) -> str:
+        """The text this label was given, elided or not."""
+        return self._full
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        super().setText(self._fitted())
+
+    def _fitted(self) -> str:
+        """The full text, elided to the painted width (never a cut-off glyph)."""
+        width = self.contentsRect().width()
+        if width <= 0:
+            return self._full
+        return self.fontMetrics().elidedText(self._full, self._mode, width)
+
+
+class LogPanel(QPlainTextEdit):
+    """A read-only monospace log: what is listed is *exactly* what will happen.
+
+    The itemized actions of a plan are paths, and a path is wider than any
+    dialog -- an item view elides it (or hides it behind a scrollbar) and the
+    user never sees the destination they are approving.  This panel wraps
+    instead of clipping, so a line is always complete on screen, and the text
+    stays selectable so a path can be copied out (design §9.1).
+    """
+
+    def __init__(self, lines: Sequence[str] = (), parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("LogPanel")
+        self.setReadOnly(True)
+        self.setFont(theme.mono_font("sm"))
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.set_lines(lines)
+
+    def set_lines(self, lines: Sequence[str]) -> None:
+        """Replace the whole log (one entry per line)."""
+        self.setPlainText("\n".join(lines))
+        self.moveCursor(QTextCursor.MoveOperation.Start)
+
+    def lines(self) -> list[str]:
+        """Every line as it renders (the reverse of :meth:`set_lines`)."""
+        return self.toPlainText().splitlines()
+
+
+class _SpaceToggle(QObject):
+    """Space over a table toggles the current row (design §9.1: keyboard)."""
+
+    def __init__(self, table: QTableView, toggle: Callable[[QModelIndex], bool]) -> None:
+        super().__init__(table)
+        self._table = table
+        self._toggle = toggle
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if (
+            watched is self._table
+            and event.type() == QEvent.Type.KeyPress
+            and isinstance(event, QKeyEvent)
+            and event.key() == Qt.Key.Key_Space
+        ):
+            return self._toggle(self._table.currentIndex())
+        return False
+
+
+def space_toggles(table: QTableView, toggle: Callable[[QModelIndex], bool]) -> None:
+    """Give ``table`` a keyboard path to its checkboxes: Space toggles the row.
+
+    A checkable cell that only answers the mouse leaves the whole flow
+    mouse-only, and "full keyboard navigation" is part of the design bar.
+    ``toggle`` returns ``True`` when it changed something (the key is then
+    consumed instead of scrolling the view).
+    """
+    table.installEventFilter(_SpaceToggle(table, toggle))
 
 
 # --------------------------------------------------------------------------- #
@@ -401,13 +518,31 @@ class Toast(QFrame):
         *,
         tone: str = "info",
         timeout_ms: int = 4000,
+        above: QWidget | None = None,
     ) -> Toast:
-        """Show ``text`` over ``parent`` and take it away again."""
+        """Show ``text`` over ``parent`` and take it away again.
+
+        Centred horizontally and floats just above ``above`` when the caller
+        names the row of controls the message belongs to: every screen that
+        reports a background result ends in an action bar (Build plan, Execute,
+        Revert), and a toast covering the button the user is about to press is
+        worse than no toast at all.
+
+        One toast at a time: a new result replaces the one on screen instead of
+        stacking on top of it (two boxes in the same place hide each other's
+        text).
+        """
+        for previous in parent.findChildren(cls):
+            previous.close()
         toast = cls(text, tone, parent)
         toast.adjustSize()
+        if above is not None:
+            bottom = above.mapTo(parent, QPoint(0, 0)).y() - theme.SPACE["sm"]
+        else:
+            bottom = parent.height() - theme.SPACE["xxl"]
         toast.move(
             max(theme.SPACE["lg"], (parent.width() - toast.width()) // 2),
-            max(theme.SPACE["lg"], parent.height() - toast.height() - theme.SPACE["xxl"]),
+            max(theme.SPACE["lg"], bottom - toast.height()),
         )
         toast.show()
         toast.raise_()
@@ -545,11 +680,12 @@ class Segmented(QWidget):
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         self._buttons: list[QPushButton] = []
+        self._icons = dict(icons_by_label or {})
         for index, label in enumerate(labels):
             button = QPushButton(label, self)
             button.setObjectName("Segment")
             button.setCheckable(True)
-            icon_name = (icons_by_label or {}).get(label)
+            icon_name = self._icons.get(label)
             if icon_name:
                 button.setIcon(icons.icon(icon_name, theme.tokens().muted, 14))
             button.setToolTip(f"Show {label.lower()}")
@@ -586,7 +722,7 @@ class Segmented(QWidget):
             icon = button.icon()
             if icon.isNull():
                 continue
-            name = button.text().lower()
+            name = self._icons.get(button.text()) or button.text().lower()
             tone = "accent" if button.isChecked() else "muted"
             button.setIcon(icons.tone_icon(name, tone, 14))
 

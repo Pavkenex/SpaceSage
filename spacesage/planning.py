@@ -316,7 +316,12 @@ def _detail_of(action: planner.PlanAction) -> str:
     if action.type == "MOVE":
         link = planner.link_label(action.link_after) if action.link_after else "no link"
         destination = action.dest or "?"
-        extra = " · needs elevation" if action.elevation_required else ""
+        # The link label already names the elevation when it needs one: say it once.
+        extra = (
+            " · needs elevation"
+            if action.elevation_required and "needs elevation" not in link
+            else ""
+        )
         return f"moves to {destination} · still reachable as a {link}{extra}"
     if action.type == "COMPRESS_NTFS":
         return "compressed in place (NTFS)"

@@ -357,6 +357,7 @@ QPushButton {
     font-weight: 600;
 }
 QPushButton:hover { background: $hover; }
+QPushButton:focus { border: 1px solid $focus; }
 QPushButton:disabled { color: $faint; border-color: $border; }
 QPushButton#Primary {
     background: $accent;
@@ -433,6 +434,7 @@ QTableView {
 }
 QTableView::item { padding: 0 ${space_sm}px; border: none; }
 QTableView::item:hover { background: $hover; }
+QTableView:focus { border: 1px solid $focus; }
 QHeaderView { background: $raised; }
 QHeaderView::section {
     background: $raised;
@@ -445,6 +447,17 @@ QHeaderView::section {
 }
 QHeaderView::section:hover { color: $text; }
 QTableCornerButton::section { background: $raised; border: none; }
+
+/* ---- logs (the dry-run preview and the confirmation listing) ---------- */
+QPlainTextEdit#LogPanel {
+    background: $sunken;
+    color: $text;
+    border: 1px solid $border;
+    border-radius: ${radius_sm}px;
+    padding: ${space_sm}px;
+    selection-background-color: $selection;
+    selection-color: $text;
+}
 
 /* ---- misc ------------------------------------------------------------ */
 QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }

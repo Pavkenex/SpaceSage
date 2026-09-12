@@ -266,6 +266,24 @@ def test_sorting_by_another_column(
     assert model.sort_key == "gain"
 
 
+def test_space_checks_the_row_under_the_cursor(
+    window: MainWindow, fixture_listing: opportunities.OpportunityList, qtbot: object
+) -> None:
+    """Keyboard: Space checks or unchecks the row the cursor is on (design §9.1)."""
+    show_listing(window, fixture_listing, qtbot)
+    view = window.opportunities_view
+    model = view.table_model()
+    table = view.table
+    index = model.index_of(VIDEOS)
+    assert index.isValid()
+
+    table.setCurrentIndex(index)
+    qtbot.keyClick(table, Qt.Key.Key_Space)  # type: ignore[attr-defined]
+    assert model.selection.is_selected(opportunities.path_key(VIDEOS))
+    qtbot.keyClick(table, Qt.Key.Key_Space)  # type: ignore[attr-defined]
+    assert len(model.selection) == 0
+
+
 def test_theme_switch_keeps_the_screen_intact(
     window: MainWindow,
     fixture_listing: opportunities.OpportunityList,

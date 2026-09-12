@@ -53,6 +53,9 @@ class OpportunitiesView(QWidget):
     destinationEdited = Signal(str, str)
     """``(row key, destination text)`` -- S9 builds plans from these."""
 
+    buildPlanRequested = Signal(object)
+    """The paths of the checked rows: *Build plan* was pressed (S9, design §9)."""
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("Page")
@@ -113,6 +116,15 @@ class OpportunitiesView(QWidget):
         )
         self.cascade_hint.setObjectName("Faint")
         footer.addWidget(self.cascade_hint)
+        self.build_plan_button = QPushButton("Build plan", self)
+        self.build_plan_button.setObjectName("Primary")
+        self.build_plan_button.setToolTip(
+            "Turn the checked rows into one plan: per-item approval, a dry-run preview, "
+            "then a run you can undo"
+        )
+        self.build_plan_button.setEnabled(False)
+        self.build_plan_button.clicked.connect(self.request_plan)
+        footer.addWidget(self.build_plan_button)
         layout.addLayout(footer)
 
     def _build_summary_strip(self) -> QWidget:
@@ -219,8 +231,18 @@ class OpportunitiesView(QWidget):
             else:
                 header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
                 self.table.setColumnWidth(column, spec.width)
+        # The numeric cells read as labels ("up to 1023.9 PiB"): size them so a
+        # value is never elided into a number nobody can read (design §9.1).
+        for column, sample in (
+            (models.COLUMN_SIZE, "1023.9 GiB"),
+            (models.COLUMN_GAIN, "up to 1023.9 PiB"),
+        ):
+            self.table.setColumnWidth(
+                column, max(self.table.columnWidth(column), models.fitted_width(sample))
+            )
         self.table.selectionModel().currentRowChanged.connect(self._on_current_row_changed)
         self.table.doubleClicked.connect(self._on_double_clicked)
+        widgets.space_toggles(self.table, self._on_space)
         return self.table
 
     # -- data ------------------------------------------------------------- #
@@ -325,9 +347,22 @@ class OpportunitiesView(QWidget):
         )
         self.cards["volumes"].set_value(f"{len(summary.volumes):,}", drives or "nothing listed yet")
 
+    def request_plan(self) -> None:
+        """Hand the checked rows to the plan screen (the button's one job)."""
+        paths = tuple(row.path for row in self._model.selection.rows)
+        if not paths:
+            self.statusMessage.emit("Nothing to plan yet: check the rows you want planned")
+            return
+        self.buildPlanRequested.emit(paths)
+
     def _on_selection_changed(self) -> None:
-        self.selection_label.setText(self._model.selected_summary())
-        self.statusMessage.emit(self._model.selected_summary())
+        summary = self._model.selected_summary()
+        self.selection_label.setText(summary)
+        self.selection_label.setToolTip(
+            "The checked rows become one plan; a checked folder covers its contents"
+        )
+        self.build_plan_button.setEnabled(bool(len(self._model.selection)))
+        self.statusMessage.emit(summary)
 
     def _on_current_row_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
         row = self._model.row_at(current)
@@ -344,6 +379,14 @@ class OpportunitiesView(QWidget):
         if row is None:
             return
         self._model.toggle(row.key)
+
+    def _on_space(self, index: QModelIndex) -> bool:
+        """Space checks or unchecks the row under the cursor (keyboard path)."""
+        row = self._model.row_at(index) if index.isValid() else None
+        if row is None:
+            return False
+        self._model.toggle(row.key)
+        return True
 
     def _on_destination_edited(self, key: str, text: str) -> None:
         if text:

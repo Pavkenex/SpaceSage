@@ -125,12 +125,14 @@ def create_window(
     settings: state.Settings,
     *,
     db_path: Path | None = None,
+    data_root: Path | None = None,
     theme_manager: theme.ThemeManager | None = None,
 ) -> MainWindow:
     """Build the main window for an existing QApplication (tests use this)."""
     window = MainWindow(
         settings,
         db_path=db_path if db_path is not None else state.index_path(),
+        data_root=data_root,
         theme_manager=theme_manager,
     )
     if theme_manager is not None:

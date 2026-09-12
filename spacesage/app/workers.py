@@ -204,6 +204,60 @@ class ApplyWorker(QObject):
         self.finished.emit(report)
 
 
+class PreviewWorker(QObject):
+    """Resolve the approved subset without touching anything (the dry run).
+
+    The same resolution the execution then performs, minus the run: every
+    destination, link and refusal comes back as an
+    :class:`~spacesage.executor.ApplyReport`, and no quarantine directory,
+    journal or filesystem change happens (design §9, screen 3).
+    """
+
+    stage = Signal(str)
+    progress = Signal(object)
+    opDone = Signal(object)
+    """Never emitted: a dry run resolves, it does not step through ops."""
+
+    finished = Signal(object)
+    """The finished :class:`spacesage.executor.ApplyReport`."""
+
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        session: planning.PlanSession,
+        approved: Sequence[str],
+        quarantine_root: Path | None = None,
+        within: Sequence[str] = (),
+    ) -> None:
+        super().__init__()
+        self._session = session
+        self._approved = tuple(approved)
+        self._quarantine_root = quarantine_root
+        self._within = tuple(within)
+
+    @property
+    def total(self) -> int:
+        """How many operations the preview resolves."""
+        return len(self._approved)
+
+    @Slot()
+    def run(self) -> None:
+        """Resolve every approved action; nothing on disk is touched."""
+        try:
+            self.stage.emit("Resolving the approved actions")
+            report = self._session.preview(
+                self._approved,
+                quarantine_root=self._quarantine_root,
+                within=self._within,
+            )
+        except Exception as exc:  # an engine refusal is a dialog, never a crash
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(report)
+
+
 class UndoWorker(QObject):
     """Reverse a journal -- all of it, or the operations the user picked."""
 
@@ -279,7 +333,7 @@ class HistoryWorker(QObject):
         self.finished.emit(tuple(found))
 
 
-Worker = AnalysisWorker | PlanWorker | ApplyWorker | UndoWorker | HistoryWorker
+Worker = AnalysisWorker | PlanWorker | PreviewWorker | ApplyWorker | UndoWorker | HistoryWorker
 """Every worker :class:`BackgroundTask` can run, in one union.
 
 Typing the task against the concrete workers (rather than ``QObject``) keeps the

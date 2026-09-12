@@ -17,6 +17,9 @@ The tree is deliberately one of each kind the plan screen has to show:
     a T1 file quarantine inside a folder that is itself a T2 review item,
 ``media/holiday.mp4``
     a T2 move candidate (needs a target on another volume),
+``archive/setup.msi``
+    an installer older than a year outside Downloads: the classifier's advice
+    (a T2 ``REVIEW``), so the plan screen has an advice row that never executes,
 ``keep/notes.txt``
     an entry no rule matches -- the explicit *No action* row.
 """
@@ -49,6 +52,7 @@ TREE: Mapping[str, int] = {
     "scratch/old.dmp": 6 * MIB,
     "logs/session.log": 3 * MIB,
     "media/holiday.mp4": 5 * MIB,
+    "archive/setup.msi": 2 * MIB,
     "keep/notes.txt": 2 * MIB,
 }
 
@@ -195,6 +199,28 @@ def cleanup(*paths: Path) -> None:
     """Remove directories a test had to create outside its ``tmp_path``."""
     for path in paths:
         shutil.rmtree(path, ignore_errors=True)
+
+
+def foreign_root(prefix: str = "spacesage-live-") -> Path | None:
+    """A writable temporary folder that is not on ``/tmp``'s volume, or ``None``.
+
+    The planner refuses a move target on the source's own volume (a move there
+    frees nothing -- :func:`spacesage.planner.same_volume`), so a test that plans
+    and executes a move needs a second one.  ``/var/tmp`` sits on a different
+    first component than ``/tmp`` and exists on every Linux runner; ``/dev/shm``
+    is the fallback.
+    """
+    import tempfile
+
+    for candidate in ("/var/tmp", "/dev/shm"):
+        root = Path(candidate)
+        if not root.is_dir():
+            continue
+        try:
+            return Path(tempfile.mkdtemp(prefix=prefix, dir=str(root)))
+        except OSError:  # pragma: no cover - a read-only tmp area
+            continue
+    return None
 
 
 def main(argv: Sequence[str] | None = None) -> int:

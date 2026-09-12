@@ -22,15 +22,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QVBoxLayout,
@@ -41,7 +40,93 @@ from spacesage import executor, stats
 from spacesage.app import theme, widgets
 
 
-class ConfirmDialog(QDialog):
+class LogDialog(QDialog):
+    """A dialog whose itemized listing is fitted to what it has to show.
+
+    Both the confirmation and the dry-run preview list paths, and a path is
+    wider than any dialog that still looks like a dialog.  The shared behaviour
+    is here: the panel wraps instead of clipping, the dialog opens wide enough
+    that one operation reads as one line, and it grows until the listing fits --
+    capped by the window it belongs to, so it never becomes a window of its own.
+    """
+
+    #: A sanity ceiling for the listing (the parent window's own height rules).
+    MAX_LOG_HEIGHT = 900
+    #: The widest the dialog will ask for, however long a path is.
+    MAX_WIDTH = 1180
+    #: The narrowest a listing dialog may become.
+    MIN_WIDTH = 560
+
+    def _bind_log(self, panel: widgets.LogPanel) -> None:
+        """Register the listing panel: it is what the dialog sizes itself around."""
+        self._log = panel
+        self._log.setMinimumHeight(self._log_height())
+        self.setMinimumWidth(max(self.minimumWidth(), self._fit_width()))
+
+    # -- sizing ---------------------------------------------------------- #
+
+    def _height_cap(self) -> int:
+        """As tall as the window it opens in allows, never more than ``MAX_LOG_HEIGHT``."""
+        limit = self.MAX_LOG_HEIGHT
+        owner = self.parentWidget()
+        if owner is not None:
+            limit = min(limit, max(240, owner.height() - self._chrome() - theme.SPACE["md"]))
+        else:
+            screen = self.screen()
+            if screen is not None:
+                limit = min(limit, max(240, screen.availableGeometry().height() - 220))
+        return limit
+
+    def _chrome(self) -> int:
+        """Everything in the dialog that is not the listing (measured, not guessed)."""
+        return max(self.height() - self._log.height(), 0)
+
+    def _fit_width(self) -> int:
+        """Widen the dialog so a resolved path does not have to wrap."""
+        metrics = self._log.fontMetrics()
+        longest = max((metrics.horizontalAdvance(line) for line in self._log.lines()), default=0)
+        chrome = 2 * theme.SPACE["xl"] + 2 * theme.SPACE["sm"] + theme.SPACE["md"]
+        limit = self.MAX_WIDTH
+        owner = self.parentWidget()
+        if owner is not None:
+            limit = min(limit, max(self.MIN_WIDTH, owner.width() - 2 * theme.SPACE["md"]))
+        return min(limit, max(self.MIN_WIDTH, longest + chrome))
+
+    def _log_height(self) -> int:
+        """The panel height that shows every line without scrolling (capped)."""
+        metrics = self._log.fontMetrics()
+        wanted = metrics.lineSpacing() * (len(self._log.lines()) + 1) + 2 * theme.SPACE["sm"] + 4
+        return min(self._height_cap(), wanted)
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """Open at the size that shows what the dialog is about to do."""
+        super().showEvent(event)
+        self._fit_to_content()
+        # The wrap points of long paths are only known once the panel has its
+        # real width, so the fit is corrected after the first layout pass.
+        QTimer.singleShot(0, self, self._fit_to_content)
+
+    def _fit_to_content(self) -> None:
+        """Grow until the listing fits -- or until the window runs out of height."""
+        layout = self.layout()
+        if layout is None:  # pragma: no cover - both dialogs build their layout
+            return
+        for _ in range(4):
+            layout.activate()
+            # The panel's scrollbar counts *lines*, not pixels: how many rows it
+            # still has to hide times the row height is what the dialog lacks.
+            hidden = self._log.verticalScrollBar().maximum()
+            if hidden <= 0:
+                return
+            room = self._height_cap() - self._log.minimumHeight()
+            if room <= 0:
+                return
+            step = min(hidden * self._log.fontMetrics().lineSpacing() + 1, room)
+            self._log.setMinimumHeight(self._log.minimumHeight() + step)
+            self.resize(self.width(), self.height() + step)
+
+
+class ConfirmDialog(LogDialog):
     """Ask before something irreversible, listing exactly what will happen.
 
     ``lines`` is the itemized list (one line per action, already worded by the
@@ -67,8 +152,9 @@ class ConfirmDialog(QDialog):
         self.setObjectName("ConfirmDialog")
         self.setWindowTitle(title)
         self.setModal(True)
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(self.MIN_WIDTH)
         self._acknowledge_box: QCheckBox | None = None
+        self._listing: widgets.LogPanel | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(
@@ -88,17 +174,9 @@ class ConfirmDialog(QDialog):
             layout.addWidget(explanation)
 
         if lines:
-            listing = QListWidget(self)
-            listing.setObjectName("ConfirmList")
-            listing.setSelectionMode(QListWidget.SelectionMode.NoSelection)
-            listing.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            listing.setAlternatingRowColors(False)
-            for line in lines:
-                item = QListWidgetItem(line)
-                item.setToolTip(line)
-                listing.addItem(item)
-            listing.setMinimumHeight(min(280, 28 + 24 * len(lines)))
-            layout.addWidget(listing)
+            self._listing = widgets.LogPanel(lines, self)
+            layout.addWidget(self._listing)
+            self._bind_log(self._listing)
 
         if acknowledge is not None:
             box = QCheckBox(acknowledge, self)
@@ -129,12 +207,16 @@ class ConfirmDialog(QDialog):
         """The button that accepts (tests drive it)."""
         return self._accept
 
+    def lines(self) -> list[str]:
+        """The itemized lines as they render (empty when the dialog lists nothing)."""
+        return self._listing.lines() if self._listing is not None else []
+
     def acknowledge_box(self) -> QCheckBox | None:
         """The required acknowledgement, when the dialog has one."""
         return self._acknowledge_box
 
 
-class PreviewDialog(QDialog):
+class PreviewDialog(LogDialog):
     """The dry-run preview: exactly what the approved actions would do."""
 
     def __init__(
@@ -173,18 +255,9 @@ class PreviewDialog(QDialog):
         summary.setWordWrap(True)
         layout.addWidget(summary)
 
-        self.list = QListWidget(self)
-        self.list.setObjectName("PreviewList")
-        self.list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
-        self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        for op in report.ops:
-            for line in _op_lines(op):
-                item = QListWidgetItem(line)
-                item.setToolTip(line)
-                if op.outcome == "refused":
-                    item.setForeground(Qt.GlobalColor.red)
-                self.list.addItem(item)
+        self.list = widgets.LogPanel(_op_lines(report.ops), self)
         layout.addWidget(self.list, 1)
+        self._bind_log(self.list)
 
         footer = QHBoxLayout()
         footer.setSpacing(theme.SPACE["sm"])
@@ -209,24 +282,41 @@ class PreviewDialog(QDialog):
 
     def lines(self) -> list[str]:
         """Every rendered line (tests read them)."""
-        return [self.list.item(index).text() for index in range(self.list.count())]
+        return self.list.lines()
 
 
-def _op_lines(op: executor.OpResult) -> list[str]:
-    """The two or three lines one resolved action takes in the preview."""
-    size = f"{stats.format_bytes(op.bytes)} · " if op.bytes else ""
+def _op_lines(ops: Sequence[executor.OpResult]) -> list[str]:
+    """The itemized preview: one block per action, a blank line between them.
+
+    Nothing is elided and nothing is on a second axis: each path gets a line of
+    its own, because a preview that hides a destination is not "exactly what
+    would happen" (design §9, screen 3).
+    """
+    lines: list[str] = []
+    for index, op in enumerate(ops):
+        if index:
+            lines.append("")
+        lines.extend(_one_op(op))
+    return lines
+
+
+def _one_op(op: executor.OpResult) -> list[str]:
+    """The block one resolved action takes in the preview."""
+    size = f" · {stats.format_bytes(op.bytes)}" if op.bytes else ""
     advice = "  (advice -- nothing runs)" if op.advisory else ""
-    lines = [f"{op.action_id}   {op.type}   {size}{op.path}{advice}"]
+    refused = f"  (refused: {op.reason})" if op.outcome == "refused" and op.reason else ""
+    lines = [f"{op.action_id}   {op.type}{size}{advice}{refused}", f"    {op.path}"]
     for step in op.steps:
-        where = step.src if step.dest is None else f"{step.src}  ->  {step.dest}"
-        link = (
-            f", then a {executor.link_label(step.link)} at the original path" if step.link else ""
-        )
-        lines.append(f"      {step.op} · {step.outcome} · {where}{link}")
+        lines.append(f"    {step.op} · {step.outcome}")
+        lines.append(f"        {step.src}")
+        if step.dest is not None:
+            lines.append(f"        ->  {step.dest}")
+        if step.link:
+            lines.append(f"        then a {executor.link_label(step.link)} at the original path")
         if step.reason:
             lines.append(f"        {step.reason}")
     if not op.steps:
-        lines.append(f"      {op.outcome}: {op.reason}")
+        lines.append(f"    {op.outcome}: {op.reason}")
     return lines
 
 
@@ -252,10 +342,16 @@ def report_note(parent: QWidget | None, title: str, message: str) -> None:
     box.exec()
 
 
-def toast(parent: QWidget | None, message: str, *, tone: str = "info") -> widgets.Toast | None:
-    """Pop a toast over the window that owns ``parent``."""
+def toast(
+    parent: QWidget | None,
+    message: str,
+    *,
+    tone: str = "info",
+    above: QWidget | None = None,
+) -> widgets.Toast | None:
+    """Pop a toast over the window that owns ``parent`` (above ``above``, if given)."""
     if parent is None:
         return None
     window = parent.window()
     target = window if isinstance(window, QWidget) else parent
-    return widgets.Toast.pop_up(target, message, tone=tone)
+    return widgets.Toast.pop_up(target, message, tone=tone, above=above)

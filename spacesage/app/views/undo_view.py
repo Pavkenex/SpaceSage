@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QModelIndex, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -221,6 +221,7 @@ class UndoView(QWidget):
         self._table.setItemDelegateForColumn(
             undo_models.COLUMN_STATUS, undo_models.StatusDelegate(self._table)
         )
+        widgets.space_toggles(self._table, self._on_space)
         header = self._table.horizontalHeader()
         header.setHighlightSections(False)
         for column_index, spec in enumerate(undo_models.COLUMNS):
@@ -511,7 +512,7 @@ class UndoView(QWidget):
             summary = "The revert finished, but it returned no report."
             tone = "warning"
         self.statusMessage.emit(summary)
-        dialogs.toast(self, summary, tone=tone)
+        dialogs.toast(self, summary, tone=tone, above=self.revert_all_button)
         self.refresh()
 
     def _summarize(self, report: executor.UndoReport) -> str:
@@ -736,6 +737,20 @@ class UndoView(QWidget):
         self._refresh_actions()
         self._refresh_selection_label()
         self.statusMessage.emit(self._model.checked_summary())
+
+    def _on_space(self, index: QModelIndex) -> bool:
+        """Space checks or unchecks the operation under the cursor (keyboard path)."""
+        item = self._model.row_at(index) if index.isValid() else None
+        if item is None:
+            return False
+        checked = item.seq in self._model.checked_seqs()
+        if not self._model.set_checked(item.seq, not checked):
+            self.statusMessage.emit(
+                f"Operation {item.seq} cannot be reverted: {self._model.status_of(item)}"
+            )
+            return False
+        self._on_selection_changed()
+        return True
 
     def _revert_selected(self) -> None:
         self.revert(self._model.checked_seqs(), confirm=True)

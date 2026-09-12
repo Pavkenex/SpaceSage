@@ -94,6 +94,19 @@ On a bare Linux box the Qt runtime libraries are required (`libegl1 libgl1 libgl
 
 Everything the screens show comes from `spacesage/opportunities.py` (rows, filters, cascade, summary) — a Qt-free view-model over the engine; the widgets hold no SQL and the engine never runs on the UI thread.
 
+**Screen 3 — Plan & Execute, and Undo.** The checked rows become one plan, and the plan becomes files that moved:
+
+- the action bar under the list names the checked count and their estimated gain and offers **Build plan** (disabled until something is checked);
+- the plan screen shows every action the selection produced — a folder row's actions cascade into the plan, and `REVIEW`/`NATIVE` items are listed as *advice* that can never be approved;
+- each click rewrites `approved.json` for this plan's own `plan_id` (in `<data dir>/plans/<token>/`), so the approval on disk is always what the user decided;
+- **Dry-run preview** resolves every approved action into exactly what would happen (quarantine destination, move destination, the link that follows, and any refusal) and touches nothing;
+- **Execute** sits behind one itemized, danger-styled confirmation listing every action; the run reports per item as it goes, and everything that failed, was refused or had to be skipped is surfaced as a banner — never hidden;
+- **Undo** (the switch beside *Plan*) lists the app's journals, reverts all or a selection with each payload verified against the digest recorded on the way in, and shows a status per operation.
+
+Without a mouse: **Space** checks the row under the cursor in any of the three lists (check in Opportunities, approve in the plan, revert-selection in Undo — an advice row refuses and says why), **Ctrl+F** jumps to the search, **Ctrl+1..4** switch pages, and Executing or previewing a plan has its own shortcuts.
+
+`spacesage/planning.py` is the Qt-free seam (`PlanRequest` → `PlanDraft` → `PlanSession` → journal history); the screens only render what it returns.
+
 GUI tests are pytest-qt on Qt's offscreen platform (no display needed) and include the screenshot renders:
 
 ```sh
@@ -101,7 +114,7 @@ source scripts/gui-env.sh && uv run pytest         # engine + GUI suites
 uv run pytest tests/gui -q                         # just the desktop app
 ```
 
-The renders land in `artifacts/gui/` (`import.png`, `opportunities.png`, `details.png`, plus the dark-theme variant) and are asserted to be real paints, not blank frames.
+The renders land in `artifacts/gui/` (`import.png`, `opportunities.png`, `details.png`, the dark-theme variant, and the loop's `plan.png` / `dryrun.png` / `confirm.png` / `execute.png` / `undo.png`) and are asserted to be real paints, not blank frames. The plan and undo renders are driven over a live sandbox tree (`tests/fixtures/gen_live.py`), so they show a run that really ran and the journal it left.
 
 ## License
 

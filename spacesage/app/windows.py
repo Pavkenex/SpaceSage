@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -27,7 +27,7 @@ from spacesage import opportunities
 from spacesage.app import icons, state, theme, widgets
 from spacesage.app.views.import_view import ImportView
 from spacesage.app.views.opportunities_view import OpportunitiesView
-from spacesage.app.views.plan_view import PlanView
+from spacesage.app.views.plan_view import PlanPage
 from spacesage.app.views.settings_view import SettingsView
 
 PAGES: tuple[tuple[str, str, str], ...] = (
@@ -49,12 +49,14 @@ class MainWindow(QMainWindow):
         settings: state.Settings,
         *,
         db_path: Path | None = None,
+        data_root: Path | None = None,
         theme_manager: theme.ThemeManager | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._settings = settings
         self._db_path = db_path if db_path is not None else state.index_path()
+        self._data_root = data_root if data_root is not None else state.data_dir()
         self._theme_manager = theme_manager
         self.setWindowTitle("SpaceSage")
         self.resize(1440, 900)
@@ -74,12 +76,17 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget(central)
         self.import_view = ImportView(self._settings, db_path=self._db_path, parent=self.stack)
         self.opportunities_view = OpportunitiesView(self.stack)
-        self.plan_view = PlanView(self.stack)
+        self.plan_page = PlanPage(
+            self._data_root,
+            db_path=self._db_path,
+            settings=self._settings,
+            parent=self.stack,
+        )
         self.settings_view = SettingsView(self._settings, db_path=self._db_path, parent=self.stack)
         for widget in (
             self.import_view,
             self.opportunities_view,
-            self.plan_view,
+            self.plan_page,
             self.settings_view,
         ):
             self.stack.addWidget(widget)
@@ -88,7 +95,10 @@ class MainWindow(QMainWindow):
 
         self.import_view.analysisReady.connect(self._on_analysis_ready)
         self.import_view.busyChanged.connect(self._on_busy_changed)
-        self.plan_view.goToOpportunities.connect(lambda: self.navigate("opportunities"))
+        self.opportunities_view.statusMessage.connect(self.set_status)
+        self.opportunities_view.buildPlanRequested.connect(self.build_plan)
+        self.plan_page.goToOpportunities.connect(lambda: self.navigate("opportunities"))
+        self.plan_page.statusMessage.connect(self.set_status)
         self.settings_view.themeModeChanged.connect(self.themeModeChanged.emit)
 
         self._build_status_bar()
@@ -139,7 +149,7 @@ class MainWindow(QMainWindow):
         bar.setSizeGripEnabled(False)
         self.status_dataset = QLabel("No analysis yet", bar)
         bar.addWidget(self.status_dataset, 1)
-        self.status_message = QLabel("", bar)
+        self.status_message = widgets.ElidedLabel("", bar, mode=Qt.TextElideMode.ElideRight)
         self.status_message.setObjectName("Faint")
         bar.addPermanentWidget(self.status_message)
         self.status_theme = QLabel("", bar)
@@ -213,6 +223,17 @@ class MainWindow(QMainWindow):
         """The analysis currently shown."""
         return self.opportunities_view.listing()
 
+    def build_plan(self, paths: object) -> bool:
+        """Compose a plan out of the checked rows and put the user on it (design §9, screen 3)."""
+        listing = self.listing()
+        if listing is None:
+            return False
+        wanted = [str(path) for path in paths] if isinstance(paths, (list, tuple)) else []
+        if not wanted:
+            return False
+        self.navigate("plan")
+        return self.plan_page.plan.build(listing, wanted)
+
     def _on_busy_changed(self, busy: bool) -> None:
         self.status_message.setText("Analyzing…" if busy else "")
 
@@ -231,11 +252,13 @@ class MainWindow(QMainWindow):
         self.rail_footer.setStyleSheet(f"color: {active.faint};")
         self.status_theme.setText(f"{active.name.capitalize()} theme")
         self.opportunities_view.apply_theme()
+        self.plan_page.apply_theme()
         self.settings_view.set_mode(self._theme_manager.mode if self._theme_manager else "system")
 
     # -- lifecycle -------------------------------------------------------- #
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        """Wait for a running analysis so nothing is killed mid-write."""
+        """Wait for a running analysis or run so nothing is killed mid-write."""
         self.import_view.shutdown()
+        self.plan_page.shutdown()
         super().closeEvent(event)
