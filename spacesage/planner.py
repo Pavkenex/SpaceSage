@@ -189,6 +189,8 @@ ORDER BY path ASC
 """
 
 _SIDE_EFFECTS: Mapping[str, str] = {
+    # One sentence per action type, also rendered by the desktop app (screen 2):
+    # the GUI must not invent its own wording for what an action changes.
     "DELETE_QUARANTINE": (
         "Quarantined, never erased: the entry moves into the quarantine store and can be "
         "moved back until the store is purged."
@@ -294,6 +296,32 @@ def _volume_of(path: str) -> str:
         return path[:2].lower()
     stripped = path.lstrip("/")
     return "/" + (stripped.split("/", 1)[0] if stripped else "")
+
+
+def volume_of(path: str) -> str:
+    """Volume key of a path, as §7 plans it (``c:``, ``\\\\server\\share``, ``/home``).
+
+    Public face of the *same volume* arithmetic :func:`same_volume` uses, so the
+    desktop app can group and label a list by drive without a second rule.
+    """
+    return _volume_of(path)
+
+
+def side_effects_of(action_type: str) -> str | None:
+    """One plain sentence about what ``action_type`` changes, or ``None``.
+
+    The desktop app renders the same wording the plan document carries
+    (design §9.1: every control earns its place -- one source of truth).  A
+    ``MOVE`` is destination-dependent, so it is composed by
+    :func:`spacesage.opportunities.side_effects`; ``KEEP`` has no plan action
+    and therefore no entry here.
+    """
+    return _SIDE_EFFECTS.get(action_type)
+
+
+def link_label(link: str) -> str:
+    """Plain-language name of a link type (``JUNCTION`` -> "directory junction")."""
+    return _link_label(link)
 
 
 def same_volume(path: str, target: str) -> bool:
@@ -1432,13 +1460,16 @@ __all__ = [
     "compose_plan",
     "compute_plan_id",
     "destination",
+    "link_label",
     "link_policy",
     "measure_free_space",
     "relative_parts",
     "render_json",
     "render_markdown",
     "same_volume",
+    "side_effects_of",
     "target_from_spec",
     "target_root",
     "validate_plan",
+    "volume_of",
 ]
