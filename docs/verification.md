@@ -23,6 +23,14 @@ About a minute and a gigabyte of scratch space. CI runs it as the `e2e` job
 the run's evidence; the cross-platform test matrix skips the pass
 (`--ignore=tests/e2e`) because the scenario is POSIX-shaped on purpose.
 
+A release is also verified the way a stranger gets the code: `git clone` into a
+different directory, `uv sync --frozen --extra build`, the whole suite. That is
+not ceremony -- the check is what caught the committed plan fixture carrying a
+machine-specific `rules_fingerprint` (it hashed each rule's pack path, so the
+golden could only be reproduced by the machine that generated it); the
+fingerprint now covers what a rule does and not where its pack file lives
+(`spacesage/rules.py`).
+
 ### The disk it plants
 
 `tests/e2e/scenario.py` builds the tree from fixed sizes, fixed ages and a
@@ -86,6 +94,16 @@ card):
 - **The renders carry the run's clock.** Timestamps in the screens mean
   `artifacts/gui/*.png` go stale on every run (the same wart the screenshot
   suite has always had).
+- **Python 3.11 can abort at interpreter shutdown after a green run.** On
+  3.11.15 with the locked PySide6 6.11.2 the Qt suites finish (`tests/gui`:
+  `109 passed`) and then the interpreter dies while finalizing (`Fatal Python
+  error: bool_dealloc ... Garbage-collecting`), so `pytest` exits 134 even
+  though nothing failed; the same suites on 3.13.5 exit 0. It needs
+  accumulation across files -- a single file (`test_shell.py`,
+  `test_screenshots.py`) exits 0. CI's `pytest` matrix has a 3.11 leg, so that
+  job's exit code can lie for a green suite; it is filed as its own card with
+  the logs, and it is not a regression of this pass (`tests/gui` alone
+  reproduces it).
 - **The bars clip at the smallest window.** Measured on the shell's minimum
   size (980x620): the Plan screen's approval line paints 137px of the 599px it
   needs and the Opportunities hint 366px of 398px. At the reference size
