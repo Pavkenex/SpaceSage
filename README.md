@@ -46,7 +46,7 @@ Every picture above is a real render produced by the GUI test suite and committe
 
 ## Status
 
-🚧 In development toward **v0.1.0**. The full design and build plan live in [`docs/design.md`](docs/design.md); the AI-vs-deterministic research behind the hybrid architecture is in [`docs/research/ai-and-alternatives.md`](docs/research/ai-and-alternatives.md). Work is tracked as slices in [`docs/slices.md`](docs/slices.md).
+**v0.1.0** — the full build (S0–S12) is done: the engine, the desktop app, the optional AI layer, the packaged build and the end-to-end acceptance pass. The full design and build plan live in [`docs/design.md`](docs/design.md); the AI-vs-deterministic research behind the hybrid architecture is in [`docs/research/ai-and-alternatives.md`](docs/research/ai-and-alternatives.md). Work is tracked as slices in [`docs/slices.md`](docs/slices.md); what "done" was proven to mean is in [`docs/verification.md`](docs/verification.md).
 
 ## Docs
 
@@ -60,6 +60,7 @@ Every picture above is a real render produced by the GUI test suite and committe
 | [`docs/design.md`](docs/design.md) | architecture, data model, plan schema, safety model, executor design |
 | [`docs/rules.md`](docs/rules.md) | rule-pack authoring guide (matchers, tiers, actions, ordering) |
 | [`docs/slices.md`](docs/slices.md) | build slices with acceptance criteria |
+| [`docs/verification.md`](docs/verification.md) | the acceptance pass, the evidence it leaves, and where each slice's feature lives |
 | [`docs/dev-environment.md`](docs/dev-environment.md) | the dev container (vendored GL libs, offscreen Qt) |
 | [`docs/adr/`](docs/adr/) | architecture decision records |
 | [`CHANGELOG.md`](CHANGELOG.md) | what changed, release by release |
@@ -130,6 +131,12 @@ screenshot renders land in [`artifacts/gui/`](artifacts/gui) and are asserted to
 be real paints, not blank frames. In the dev container, source the helper first
 (`source scripts/gui-env.sh` — vendored GL libs + `QT_QPA_PLATFORM=offscreen`,
 see [`docs/dev-environment.md`](docs/dev-environment.md)).
+
+The acceptance pass plants a full disk of its own and drives it through the
+whole pipeline and the app (`uv run pytest tests/e2e`, a minute and about a
+gigabyte of scratch); its renders, the demo plan and the run logs land in
+[`artifacts/e2e/`](artifacts/e2e). What it proves, test by test:
+[`docs/verification.md`](docs/verification.md).
 
 ### Packaging
 

@@ -1,0 +1,6 @@
+selection text : '13 checked · 221.0 MiB estimated gain'
+selection width: 254px painted, 254px needed, font DejaVu Sans 13px
+hint text      : 'Selecting a folder covers its contents: every byte is counted once.'
+hint width     : 398px painted, 398px needed
+window         : 1440x900
+toasts visible : 0

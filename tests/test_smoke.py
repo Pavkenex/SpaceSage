@@ -42,7 +42,10 @@ def load_ci_workflow() -> dict[str, object]:
 
 
 def test_version_constant() -> None:
-    assert spacesage.__version__ == "0.1.0.dev0"
+    # Pinned to the released version: the release workflow refuses a tag that
+    # does not match what the package reports, so this is the CI-side half of
+    # that check (v0.1.0 is the tag of the S12 slice).
+    assert spacesage.__version__ == "0.1.0"
 
 
 def test_installed_metadata_matches_version_constant() -> None:

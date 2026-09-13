@@ -10,6 +10,13 @@ not understand.
 
 ## [Unreleased]
 
+Nothing yet: `v0.1.0` (below) is the current release.
+
+## [0.1.0] - 2026-09-13
+
+The first release: the engine, the desktop app, the optional AI layer, the
+packaged build and the end-to-end acceptance pass that proves them together.
+
 ### Added
 
 - **Desktop app (PySide6)**: the shell (rail, status bar, theme token set with
@@ -44,8 +51,17 @@ not understand.
 - **Docs**: README (app first), `docs/quickstart.md`, `docs/app-guide.md`,
   `docs/safety.md`, `docs/faq.md`, plus the engine references and the design
   document.
+- **Acceptance pass** (`tests/e2e`, run in CI as the `e2e` job): a planted
+  "full disk" scenario drives every engine stage out of process
+  (ingest → classify → candidates → plan → report → dry run → execute → undo,
+  with the tree verified restored byte for byte) and then the app itself
+  through all five screens, with the renders and the run logs kept as evidence
+  (`artifacts/e2e/`). `docs/verification.md` maps every slice to the code,
+  tests and docs that carry it.
 
 ### Notes
 
 - The packaged artifacts are not committed: CI builds them, the release workflow
   publishes them.
+- `v0.1.0` is an annotated tag on this commit; the release workflow refuses a
+  tag whose version does not match `spacesage --version`.

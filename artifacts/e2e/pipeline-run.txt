@@ -1,0 +1,18 @@
+plan id          sha256:348a282a5a590a73ce8b30f534e7dcd23f638b155a63dcc9fed2ec881d82e720
+approved         25 of 30 actions
+planned bytes    228589568
+reclaimed bytes  228589568
+restored bytes   228589568
+journal          /tmp/spacesage-e2e/mutation/journal.jsonl
+tree before      112 entries
+tree after undo  112 entries (identical)
+
+commands:
+  spacesage ingest /tmp/spacesage-e2e/mutation/full-disk.csv --db /tmp/spacesage-e2e/mutation/index --replace
+  spacesage plan --db /tmp/spacesage-e2e/mutation/index --rules /tmp/spacesage-e2e/mutation/rules --min-size '1 MiB' --top 0 --reserve 0 --free '50 GiB' --to /var/tmp/mutation-target
+  spacesage plan --db /tmp/spacesage-e2e/mutation/index --rules /tmp/spacesage-e2e/mutation/rules --min-size '1 MiB' --top 0 --reserve 0 --free '50 GiB' --to /var/tmp/mutation-target --json -o /tmp/spacesage-e2e/mutation/plan.json
+  spacesage apply /tmp/spacesage-e2e/mutation/plan.json --approve /tmp/spacesage-e2e/mutation/approved.json --journal /tmp/spacesage-e2e/mutation/dry-run.jsonl --quarantine /tmp/spacesage-e2e/mutation/quarantine --within /tmp/spacesage-e2e/mutation/disk --json
+  spacesage undo /tmp/spacesage-e2e/mutation/dry-run.jsonl --json
+  spacesage apply /tmp/spacesage-e2e/mutation/plan.json --approve /tmp/spacesage-e2e/mutation/approved.json --journal /tmp/spacesage-e2e/mutation/journal.jsonl --quarantine /tmp/spacesage-e2e/mutation/quarantine --within /tmp/spacesage-e2e/mutation/disk --json --execute
+  spacesage undo /tmp/spacesage-e2e/mutation/journal.jsonl --json
+  spacesage undo /tmp/spacesage-e2e/mutation/journal.jsonl --json

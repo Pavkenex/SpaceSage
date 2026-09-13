@@ -1,0 +1,25 @@
+24 opportunities · 221.0 MiB estimated gain · as of 2026-09-13 03:34 UTC
+    55574528  T2  action       NATIVE             /tmp/spacesage-e2e/smoke/disk/Games/SteamLibrary
+    37748736  T2  action       MOVE               /tmp/spacesage-e2e/smoke/disk/Users/Alice/Videos
+    31457280  T2  action       NATIVE             /tmp/spacesage-e2e/smoke/disk/Games/SteamLibrary/steamapps/common/BigGame/data.pak
+    25165824  T2  action       MOVE               /tmp/spacesage-e2e/smoke/disk/Users/Alice/Videos/holiday-2024.mp4
+    20971520  T3  undecided    REVIEW             /tmp/spacesage-e2e/smoke/disk/Users/Alice/Documents/dataset_v1.bin
+    17833984  T3  undecided    REVIEW             /tmp/spacesage-e2e/smoke/disk/Program Files/BigApp
+    16777216  T2  action       DELETE_QUARANTINE  /tmp/spacesage-e2e/smoke/disk/Dev/projects/shop/.venv
+    16777216  T2  action       DELETE_QUARANTINE  /tmp/spacesage-e2e/smoke/disk/Dev/projects/shop/.venv/lib/python3.13/site-packages/libtorch.so
+    16777216  T2  undecided    REVIEW             /tmp/spacesage-e2e/smoke/disk/Users/Alice/Downloads/Rescue-Image.iso
+    15728640  T3  undecided    REVIEW             /tmp/spacesage-e2e/smoke/disk/Users/Alice/AppData/Local/Google
+    15728640  T3  undecided    REVIEW             /tmp/spacesage-e2e/smoke/disk/Users/Alice/AppData/Local/Google/Chrome/User Data/Default
+    15728640  T3  action       NATIVE             /tmp/spacesage-e2e/smoke/disk/Users/Alice/OneDrive/Archive/big-backup.zip
+    14680064  T1  action       DELETE_QUARANTINE  /tmp/spacesage-e2e/smoke/disk/Games/SteamLibrary/steamapps/shadercache
+    14680064  T1  action       DELETE_QUARANTINE  /tmp/spacesage-e2e/smoke/disk/Games/SteamLibrary/steamapps/shadercache/12345/state.bin
+    14680064  T3  action       NATIVE             /tmp/spacesage-e2e/smoke/disk/Windows/WinSxS/Backup/amd64_package.manifest
+    13631488  T2  action       DELETE_QUARANTINE  /tmp/spacesage-e2e/smoke/disk/Dev/projects/shop/node_modules
+    13631488  T2  action       DELETE_QUARANTINE  /tmp/spacesage-e2e/smoke/disk/Dev/projects/shop/node_modules/left-pad/lib/big.js
+    13631488  T2  action       DELETE_QUARANTINE  /tmp/spacesage-e2e/smoke/disk/Users/Alice/Downloads/game-patch-setup.exe
+    13631488  T2  action       MOVE               /tmp/spacesage-e2e/smoke/disk/Users/Alice/Pictures
+    12582912  T2  action       MOVE               /tmp/spacesage-e2e/smoke/disk/Users/Alice/Videos/concert.mkv
+    11534336  T2  action       DELETE_QUARANTINE  /tmp/spacesage-e2e/smoke/disk/Users/Alice/Downloads/SetupApp-v3.2.1.msi
+    17833984  T3  no_action    KEEP               /tmp/spacesage-e2e/smoke/disk/Program Files
+    17825792  T3  no_action    KEEP               /tmp/spacesage-e2e/smoke/disk/Program Files/BigApp/app.dll
+    39845888  T3  no_action    KEEP               /tmp/spacesage-e2e/smoke/disk/Windows
