@@ -26,6 +26,7 @@ from spacesage import (
     rules,
     stats,
 )
+from spacesage.ai import cli as ai_cli
 from spacesage.ingest import IngestError, IngestProgress, RunStats, ingest_csv
 
 PROG = "spacesage"
@@ -468,6 +469,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="emit the undo report as JSON (spacesage.undo/v1)",
     )
     undo_parser.set_defaults(handler=_run_undo)
+
+    ai_cli.add_ai_commands(subparsers)
     return parser
 
 
