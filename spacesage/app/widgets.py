@@ -65,6 +65,12 @@ class FlowLayout(QLayout):
     The standard Qt idiom: the layout keeps its own items, reports a minimum
     width of its widest item (never the sum) and implements ``heightForWidth`` so
     the row's height follows the wrapping.
+
+    ``addWidget(widget, stretch)`` keeps the one thing a plain wrap would lose:
+    an item added with a stretch absorbs the width its line has left over, so a
+    row that wraps can still hold a field that grows -- the Opportunities filter
+    bar's search stays as wide as the bar allows instead of packing left at its
+    hint.
     """
 
     def __init__(
@@ -75,6 +81,7 @@ class FlowLayout(QLayout):
     ) -> None:
         super().__init__()
         self._items: list[QLayoutItem] = []
+        self._stretch: list[int] = []
         self._h_spacing = h_spacing
         self._v_spacing = v_spacing
         self.setContentsMargins(0, 0, 0, 0)
@@ -83,6 +90,12 @@ class FlowLayout(QLayout):
 
     def addItem(self, item: QLayoutItem) -> None:
         self._items.append(item)
+        self._stretch.append(0)
+
+    def addWidget(self, widget: QWidget, stretch: int = 0) -> None:
+        """Add a widget; a ``stretch`` above zero fills its line's leftover width."""
+        super().addWidget(widget)
+        self._stretch[-1] = stretch
 
     def count(self) -> int:
         return len(self._items)
@@ -91,7 +104,10 @@ class FlowLayout(QLayout):
         return self._items[index] if 0 <= index < len(self._items) else None
 
     def takeAt(self, index: int) -> QLayoutItem | None:
-        return self._items.pop(index) if 0 <= index < len(self._items) else None
+        if not 0 <= index < len(self._items):
+            return None
+        self._stretch.pop(index)
+        return self._items.pop(index)
 
     def expandingDirections(self) -> Qt.Orientation:
         return Qt.Orientation(0)
@@ -119,23 +135,66 @@ class FlowLayout(QLayout):
     # -- the wrap ---------------------------------------------------------- #
 
     def _arrange(self, rect: QRect, *, apply: bool) -> int:
-        """Place every item left to right, dropping to a new line when it does not fit."""
+        """Place every item left to right, dropping to a new line when it does not fit.
+
+        A line gives the width it has left over to the items added with a
+        stretch, so a row that wraps can still hold a field that grows.
+        """
         margins = self.contentsMargins()
         area = rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom())
-        x, y, line_height = area.x(), area.y(), 0
-        for item in self._items:
+        lines = self._lines(area)
+        if not lines:
+            return margins.top() + margins.bottom()
+        y = area.y()
+        for line in lines:
+            widths = self._widths(line, area.width())
+            height = 0
+            x = area.x()
+            for index, width in zip(line, widths, strict=True):
+                item = self._items[index]
+                hint = item.sizeHint()
+                if apply:
+                    item.setGeometry(QRect(QPoint(x, y), QSize(width, hint.height())))
+                x += width + self._h_spacing
+                height = max(height, hint.height())
+            y += height + self._v_spacing
+        return y - self._v_spacing - rect.y() + margins.bottom()
+
+    def _lines(self, area: QRect) -> list[list[int]]:
+        """The items of each line a greedy left-to-right wrap produces."""
+        lines: list[list[int]] = []
+        line: list[int] = []
+        x = area.x()
+        for index, item in enumerate(self._items):
             hint = item.sizeHint()
             next_x = x + hint.width() + self._h_spacing
-            if next_x - self._h_spacing > area.right() and line_height > 0:
-                x = area.x()
-                y += line_height + self._v_spacing
-                next_x = x + hint.width() + self._h_spacing
-                line_height = 0
-            if apply:
-                item.setGeometry(QRect(QPoint(x, y), hint))
+            if line and next_x - self._h_spacing > area.right():
+                lines.append(line)
+                line = []
+                next_x = area.x() + hint.width() + self._h_spacing
+            line.append(index)
             x = next_x
-            line_height = max(line_height, hint.height())
-        return y + line_height - rect.y() + margins.bottom()
+        if line:
+            lines.append(line)
+        return lines
+
+    def _widths(self, line: list[int], width: int) -> list[int]:
+        """Each item's width: what it asks for, plus the line's leftover, shared."""
+        hints = [self._items[index].sizeHint().width() for index in line]
+        leftover = width - (sum(hints) + self._h_spacing * (len(line) - 1))
+        stretches = [self._stretch[index] for index in line]
+        shares = sum(stretches)
+        if leftover <= 0 or shares <= 0:
+            return hints
+        widths = list(hints)
+        growing = [index for index, stretch in enumerate(stretches) if stretch]
+        remaining = leftover
+        for index in growing[:-1]:
+            share = leftover * stretches[index] // shares
+            widths[index] += share
+            remaining -= share
+        widths[growing[-1]] += remaining
+        return widths
 
 
 # --------------------------------------------------------------------------- #

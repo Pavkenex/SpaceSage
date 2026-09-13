@@ -273,9 +273,10 @@ class PlanView(QWidget):
 
     def _build_summary_strip(self, parent: QWidget) -> QWidget:
         strip = QWidget(parent)
-        row = QHBoxLayout(strip)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(theme.SPACE["sm"])
+        # The five cards wrap onto a second line when the page is narrow; squeezed
+        # side by side they elide their own titles (t_af23bb34).
+        row = widgets.FlowLayout(h_spacing=theme.SPACE["sm"], v_spacing=theme.SPACE["sm"])
+        strip.setLayout(row)
         self.cards: dict[str, widgets.MetricCard] = {}
         for key, title, icon in (
             ("actions", "Plan actions", "clipboard-list"),
@@ -350,18 +351,20 @@ class PlanView(QWidget):
         bar = QFrame(parent)
         self.toolbar = bar
         bar.setObjectName("Card")
-        row = QHBoxLayout(bar)
+        # The figure and five buttons need ~1190px; the shell allows a 980px window,
+        # so the row wraps its last buttons onto a second line instead of eliding
+        # their captions (t_af23bb34).  The flow packs from the left.
+        row = widgets.FlowLayout(h_spacing=theme.SPACE["sm"], v_spacing=theme.SPACE["xs"])
+        bar.setLayout(row)
         row.setContentsMargins(
             theme.SPACE["md"], theme.SPACE["sm"], theme.SPACE["md"], theme.SPACE["sm"]
         )
-        row.setSpacing(theme.SPACE["sm"])
 
         self.approval_label = widgets.ElidedLabel(
             "", bar, mode=Qt.TextElideMode.ElideRight, claim_width=True
         )
         self.approval_label.setObjectName("Muted")
         row.addWidget(self.approval_label)
-        row.addStretch(1)
 
         self.approve_all_button = widgets.ElidedButton("Approve all", bar)
         self.approve_all_button.setToolTip("Approve every executable action (advice stays advice)")

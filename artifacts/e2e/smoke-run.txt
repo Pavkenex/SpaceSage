@@ -1,12 +1,12 @@
 scenario         37 files in 75 folders, 356.0 MiB at /tmp/spacesage-e2e/smoke/disk
-listing          24 opportunities · 221.0 MiB estimated gain · as of 2026-09-13 05:06 UTC
+listing          24 opportunities · 221.0 MiB estimated gain · as of 2026-09-13 07:08 UTC
 checked rows     13
-plan             sha256:3409a44740d21f351ee5c0d14e226181836443a9ce30b1070a6e78f875bb2915
+plan             sha256:5018502c70a21ed23b43b1128cb2e7ab55cc92419a49cbf41812817c8e00f96b
 actions          13 (9 executable)
 planned bytes    121634816
 reclaimed bytes  121634816
 restored bytes   121634816
-journal          /tmp/spacesage-e2e/smoke/data/plans/3409a44740d21f35/spacesage.journal.jsonl
+journal          /tmp/spacesage-e2e/smoke/data/plans/5018502c70a21ed2/spacesage.journal.jsonl
 tree before      112 entries
 tree after undo  112 entries (identical)
 screenshots      /opt/data/spacesage/artifacts/e2e

@@ -132,30 +132,33 @@ card):
   event-loop turns exits 0, with the boot counts out of reach. Both guards come
   out together when the binding stops losing references -- the probe in
   `tests/gui/test_shutdown_guard.py` is what says so.
-- **At the smallest window the bars elide; they no longer clip.** The shell
-  allows a 980x620 window (`MainWindow.setMinimumSize`) and several rows need
-  more width than that, so what cannot fit now gives way *with a sign*: the Plan
-  toolbar's figure paints `0 of 0 executable actions approved · 0 B to recla…`
-  (137px given, 599px needed on the full-disk plan this page measures), the
-  Opportunities hint `Selecting a folder covers its contents: every byte is
-  counted on…` (392px of the 398px it needs), the Undo footer's figure, and the
-  summary strip's card titles (`ESTIMAT…`). The two squeezed bars also elide
-  captions they cannot pay for: `Dry-run preview`,
-  `Open journal file…`, `Revert selected` and `Revert all pending` -- the last
-  one is what the destructive action of the Undo screen says at that size, and
-  a plain `QPushButton` cut it at *both* ends (`vert all pendin`). Every elided
-  bar hands its full text over in a tooltip, and `tests/gui/test_min_size.py`
-  walks every screen at 980x620 *and* at 1440x900 and fails if any visible label
-  or button caption is cut without one; it failed on the code before the fix,
-  for the label and for the caption. What no label or caption can fix is the
-  row itself: at 980x620 the Plan toolbar asks for 1192-1205px (its five
-  buttons at their minimums plus the figure -- 1192px in the state this page
-  measures, 1205px on the S12 plan) and is given 736px, the Undo footer's four
-  buttons plus its figure need more than the row has, the summary strip's five
-  cards are squeezed, the filter bar's search box is given 46px and the Plan
-  table needs its horizontal scrollbar. Those bars
-  have to reflow (or the shell has to raise its minimum) before they *fit*;
-  they are honest about it until then.
+- **At the smallest window the bars reflow; nothing elides that a second line can
+  hold.** The shell still allows a 980x620 window (`MainWindow.setMinimumSize` --
+  t_af23bb34 kept it), and the six action bars still need more width than it
+  gives (the Plan toolbar 1192px in the state this page measures and 1205px on
+  the S12 plan, the Undo footer 949px, the Opportunities strip's six cards 837px,
+  the plan strip's five 778px, the Opportunities list footer 751px, the filter
+  bar's search squeezed to 46px), so each of them is a
+  `widgets.FlowLayout` now: at 980x620 a row that runs out of width moves its
+  last items onto a second line -- the Plan toolbar and the Undo footer are two
+  lines each, the strips wrap their last card or two, the filter bar puts
+  `Select visible` and `Clear` on the second line (its search keeps 235px, where
+  the old bar gave it 46) and the list footer wraps `Build plan`. Every figure,
+  caption and card title is whole at that size; at 1440x900 every row is back on
+  one line, packed from the left (the two bars used to right-align their buttons
+  with a stretch: the toolbar's buttons sit 4px further left there and the Undo
+  footer's hint and buttons 77px).
+  `FlowLayout` gained the one thing a plain wrap would lose -- `addWidget(widget,
+  stretch)` gives a line's leftover width to the items that ask for it, which is
+  what keeps the filter bar's search at its full 490px at the reference size.
+  The elision rule the previous pass built (`ElidedLabel(claim_width=True)`,
+  `ElidedButton`, `caption_room`) is unchanged: it is what text no line can hold
+  falls back to. `tests/gui/test_min_size.py` walks the six rows at 980x620 and
+  at 1440x900 and fails if any of them elides text it could have wrapped; five of
+  its tests failed on the code before the change (the figure, the captions, the
+  card titles, the footer and the search), and the pin that says the window's
+  minimum is 980x620 holds the decision itself. The two tables still scroll
+  horizontally at that size -- a table scrolls; the bars wrap.
 
 ## Where every slice's feature lives
 
@@ -175,7 +178,8 @@ card):
 | S10b | AI in the list | `spacesage/app/ai_models.py`, `spacesage/app/views/opportunities_view.py`, `spacesage/app/views/settings_view.py` | `tests/gui/test_ai_screen.py` | `docs/ai.md` |
 | S11 | Packaging and the guide | `packaging/spacesage.spec`, `packaging/win_version.py`, `scripts/make_app_icons.py`, `spacesage/app/assets/` | `tests/test_packaging.py` | `docs/design.md` §14, `docs/app-guide.md` |
 | S12 | Acceptance pass and v0.1.0 | `tests/e2e/` | `tests/e2e/test_pipeline_e2e.py`, `tests/e2e/test_gui_smoke.py` | this page, `CHANGELOG.md` |
-| S12b | The smallest window: bars elide, never clip | `spacesage/app/widgets.py` (`ElidedLabel`, `ElidedButton`, `caption_room`), `spacesage/app/views/plan_view.py`, `views/opportunities_view.py`, `views/undo_view.py` | `tests/gui/test_min_size.py` | this page, `docs/design.md` §9.1 |
+| S12b | The smallest window: bars elide, never clip | `spacesage/app/widgets.py` (`ElidedLabel`, `ElidedButton`, `caption_room`), `spacesage/app/views/plan_view.py`, `views/opportunities_view.py`, `views/undo_view.py` | `tests/gui/test_min_size.py` | this page, `docs/design.md` §9.3 |
+| S12c | The smallest window: the six bars reflow | `spacesage/app/widgets.py` (`FlowLayout` and its `stretch`), `views/plan_view.py`, `views/opportunities_view.py`, `views/undo_view.py` | `tests/gui/test_min_size.py` | this page, `docs/design.md` §9.3 |
 
 The module list is the same one `README.md` and `docs/design.md` carry; this
 table only says *which slice* put it there and which tests hold it up.

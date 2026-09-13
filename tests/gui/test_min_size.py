@@ -1,28 +1,35 @@
-"""The shell's smallest window: no bar clips the figure it is showing.
+"""The shell's smallest window: every action bar fits, and nothing is cut.
 
 The shell allows a 980x620 window (``MainWindow.setMinimumSize``) and several
-rows need more than that; at the reference size (1440x900, where the acceptance
-renders are taken) everything fits, so the defect only shows at the small size:
-a row that cannot pay shrinks its label, and a plain ``QLabel`` then paints past
-its own edge -- the user reads a truncated figure with no sign that anything is
-missing (design §9.1, "Every long line is elided *or* wrapped on purpose --
-never clipped").  A ``QPushButton`` behaves the same way, only worse: it clips
-its caption at *both* ends, so the destructive ``Revert all pending`` reads
-``vert all pendin``.
+rows need more width than that; at the reference size (1440x900, where the
+acceptance renders are taken) everything fits, so the defects only show at the
+small size.
 
-The rule this pins, at both sizes: a visible single-line label either fits its
-text, or it is one of the app's own eliding labels, which cuts the text with a
-sign (the ellipsis) and keeps the full text one hover away.  A visible button
-caption follows the same rule -- whole, or elided with the full caption in its
-tooltip.
+Two rules are pinned here, and the first one no longer stands alone:
+
+* **A visible single-line label either fits its text or elides it visibly.**  A
+  plain ``QLabel``/``QPushButton`` paints past its own edge -- the user reads a
+  truncated figure with no sign that anything is missing (design §9.1, "Every
+  long line is elided *or* wrapped on purpose -- never clipped"); the app's own
+  ``ElidedLabel``/``ElidedButton`` cut the text with an ellipsis and keep the
+  whole of it one hover away.
+* **The six action bars reflow instead of eliding at all.**  They need 750-1190px
+  and the shell gives them 736px at its minimum, so each of them is a
+  ``widgets.FlowLayout`` (t_af23bb34): a row that runs out of width puts its last
+  items on a second line, and the figures and captions stay whole.  Elision is
+  what is left for text no row can hold -- a path, a hint -- not for the bars.
+
+So at 980x620 the six rows are whole *and* taller, and at 1440x900 they are whole
+on one line; this file walks both sizes and fails if a row elides anything it
+could have wrapped.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QLabel, QPushButton, QWidget
 
 from spacesage.app import widgets
@@ -57,8 +64,17 @@ def app_with_a_plan(live_sandbox: LiveSandbox, sandbox_window: Any, qtbot: objec
 
 
 def readable_labels(root: QWidget) -> Iterator[QLabel]:
-    """Every label a user can read right now: visible, single line, plain text."""
-    for label in root.findChildren(QLabel):
+    """Every label a user can read right now: visible, single line, plain text.
+
+    The root itself counts when it is a label: a row is often *made of* its
+    figures, and the pin has to measure those too.
+    """
+    candidates = (
+        [root, *root.findChildren(QLabel)]
+        if isinstance(root, QLabel)
+        else list(root.findChildren(QLabel))
+    )
+    for label in candidates:
         if not label.isVisible() or not label.text():
             continue
         if label.wordWrap() or label.textFormat() == Qt.TextFormat.RichText:
@@ -90,7 +106,12 @@ def assert_label_is_readable(label: QLabel, where: str) -> None:
 
 def readable_buttons(root: QWidget) -> Iterator[QPushButton]:
     """Every button caption a user can read right now: visible, with text."""
-    for button in root.findChildren(QPushButton):
+    candidates = (
+        [root, *root.findChildren(QPushButton)]
+        if isinstance(root, QPushButton)
+        else list(root.findChildren(QPushButton))
+    )
+    for button in candidates:
         if button.isVisible() and button.text():
             yield button
 
@@ -133,6 +154,101 @@ def screens(window: MainWindow, qtbot: object) -> Iterator[tuple[str, QWidget]]:
     yield "undo", window
 
 
+# --------------------------------------------------------------------------- #
+# The reflow: the six bars, their parts, and the rule they hold
+# --------------------------------------------------------------------------- #
+
+
+def action_rows(window: MainWindow) -> dict[str, list[QWidget]]:
+    """The six rows t_af23bb34 reflows, each as the widgets that share its lines.
+
+    Named as the user meets them, because a failure message has to say *which*
+    bar gave something up.  The summary strips carry their metric cards: a card
+    holds its own figure and title, and those count as part of the row.
+    """
+    view = window.opportunities_view
+    plan = window.plan_page.plan
+    undo = window.plan_page.undo
+    return {
+        "Opportunities filter bar": [
+            view.search,
+            view.state_combo,
+            view.tier_combo,
+            view.category_combo,
+            view.size_combo,
+            view.select_button,
+            view.clear_button,
+        ],
+        "Opportunities summary strip": list(view.cards.values()),
+        "Opportunities list footer": [
+            view.selection_label,
+            view.cascade_hint,
+            view.build_plan_button,
+        ],
+        "Plan toolbar": [
+            plan.approval_label,
+            plan.approve_all_button,
+            plan.reject_all_button,
+            plan.preview_button,
+            plan.undo_button,
+            plan.execute_button,
+        ],
+        "Plan summary strip": list(plan.cards.values()),
+        "Undo footer": [
+            undo.selection_label,
+            undo.hint_label,
+            undo.open_button,
+            undo.refresh_button,
+            undo.revert_selected_button,
+            undo.revert_all_button,
+        ],
+    }
+
+
+def row_lines(parts: Sequence[QWidget]) -> int:
+    """How many lines the row is using (the y offsets its widgets landed on)."""
+    return len({part.geometry().y() for part in parts})
+
+
+def assert_row_is_whole(where: str, parts: Sequence[QWidget]) -> None:
+    """Nothing in the row is elided: the row wrapped instead of giving text up.
+
+    Every widget in the row, and every figure or caption inside one of its cards,
+    must paint all of the text it was given -- an ellipsis here means the row had
+    room to wrap and did not take it.
+    """
+    for part in parts:
+        for widget in [part, *part.findChildren(QWidget)]:
+            if not isinstance(widget, (widgets.ElidedLabel, widgets.ElidedButton)):
+                continue
+            if not widget.isVisible() or not widget.full_text():
+                continue
+            assert not widget.is_elided(), (
+                f"{where}: {widget.full_text()!r} is elided to {widget.text()!r} -- at the "
+                "shell's minimum the row wraps onto another line instead (t_af23bb34)"
+            )
+        for label in readable_labels(part):
+            assert_label_is_readable(label, where)
+        for button in readable_buttons(part):
+            assert_caption_is_readable(button, where)
+
+
+def walk_to_the_rows(window: MainWindow, qtbot: object) -> None:
+    """Lay out both halves of the plan page, so the undo footer is really laid out."""
+    assert window.navigate("opportunities")
+    settle(qtbot, 200)
+    assert window.navigate("plan")
+    window.plan_page.show_plan()
+    settle(qtbot, 200)
+    window.plan_page.show_undo()
+    settle(qtbot, 260)
+
+
+# --------------------------------------------------------------------------- #
+# The pins
+# --------------------------------------------------------------------------- #
+
+
 def test_no_label_is_clipped_at_the_shell_minimum(
     live_sandbox: LiveSandbox, sandbox_window: Any, qtbot: object
 ) -> None:
@@ -148,86 +264,173 @@ def test_no_label_is_clipped_at_the_shell_minimum(
                 assert_caption_is_readable(button, f"{name} at {width}x{height}")
 
 
-def test_the_squeezed_bars_elide_their_buttons_at_the_shell_minimum(
+def test_the_action_bars_wrap_at_the_shell_minimum_and_pack_at_the_reference(
     live_sandbox: LiveSandbox, sandbox_window: Any, qtbot: object
 ) -> None:
-    """The two bars that run out of room: the captions give way with a sign, not cut."""
+    """The pin under the whole change: six bars, whole at the minimum, one line at 1440.
+
+    At 980x620 every row needs 750-1190px and has 736px, so every one of them
+    takes a second line; at 1440x900 they all fit on one.  Before t_af23bb34 the
+    same rows elided their figures, their captions and their card titles instead.
+    """
+    window = app_with_a_plan(live_sandbox, sandbox_window, qtbot)
+    window.resize(*MIN_WINDOW)
+    walk_to_the_rows(window, qtbot)
+    for name, parts in action_rows(window).items():
+        assert_row_is_whole(f"{name} at 980x620", parts)
+        assert row_lines(parts) == 2, (
+            f"{name} at 980x620: the row is using {row_lines(parts)} line(s) -- this pin "
+            "describes rows that have to reflow to stay whole"
+        )
+
+    window.resize(*REFERENCE_WINDOW)
+    walk_to_the_rows(window, qtbot)
+    for name, parts in action_rows(window).items():
+        assert_row_is_whole(f"{name} at 1440x900", parts)
+        assert row_lines(parts) == 1, (
+            f"{name} at 1440x900: the row wrapped onto {row_lines(parts)} lines although "
+            "the reference size has the width for it"
+        )
+
+
+def test_the_squeezed_bars_wrap_their_buttons_at_the_shell_minimum(
+    live_sandbox: LiveSandbox, sandbox_window: Any, qtbot: object
+) -> None:
+    """The two bars that ran out of room: the whole captions move down, not under an ellipsis."""
     window = app_with_a_plan(live_sandbox, sandbox_window, qtbot)
     plan = window.plan_page.plan
     undo = window.plan_page.undo
-    squeezed = (  # the captions the four squeezed buttons must carry
+    squeezed = (  # the captions that used to be elided at the shell's minimum
         (plan.preview_button, "Dry-run preview"),
         (undo.open_button, "Open journal file…"),
         (undo.revert_selected_button, "Revert selected"),
         (undo.revert_all_button, "Revert all pending"),
     )
 
-    for size, give_way in ((MIN_WINDOW, True), (REFERENCE_WINDOW, False)):
+    for size, wrapped in ((MIN_WINDOW, True), (REFERENCE_WINDOW, False)):
         window.resize(*size)
-        assert window.navigate("plan")
-        window.plan_page.show_plan()  # the undo half was left in front by the last pass
-        settle(qtbot, 400)
-        window.plan_page.show_undo()
-        settle(qtbot, 400)
+        walk_to_the_rows(window, qtbot)
         for button, caption in squeezed:
             where = f"{caption!r} at {size[0]}x{size[1]}"
-            if give_way:
-                assert button.text().endswith("…"), (
-                    f"{where}: the caption is cut with no ellipsis, painted as {button.text()!r}"
-                )
-                assert caption in button.toolTip(), (
-                    f"{where}: elided and not reachable in a tooltip"
-                )
-                assert button.text() != caption, (
-                    f"{where} fits the shell's smallest window: this pin no longer describes "
-                    "the row"
-                )
-            else:
-                assert button.text() == caption, f"{where}: still elided"
-                assert not button.toolTip().startswith(caption), (
-                    f"{where}: whole, but its tooltip still leads with the caption"
-                )
+            assert button.full_text() == caption, f"{where}: the button was rebuilt"
+            assert button.text() == caption, (
+                f"{where}: the caption is elided to {button.text()!r}; the row has room to "
+                "wrap it onto another line instead"
+            )
+            assert not button.toolTip().startswith(caption), (
+                f"{where}: whole, but its tooltip still leads with the caption"
+            )
+        if wrapped:
+            assert plan.preview_button.geometry().y() > plan.approval_label.geometry().y(), (
+                "the toolbar kept every button on the figure's line although the shell's "
+                "minimum is too narrow for it"
+            )
+            assert undo.revert_all_button.geometry().y() > undo.selection_label.geometry().y(), (
+                "the undo footer kept every button on the figure's line although the shell's "
+                "minimum is too narrow for it"
+            )
+        else:
+            assert plan.preview_button.geometry().y() == plan.approval_label.geometry().y()
+            assert undo.revert_all_button.geometry().y() == undo.selection_label.geometry().y()
 
 
-def test_the_plan_figure_elides_visibly_at_the_shell_minimum(
+def test_the_plan_figure_is_whole_at_the_shell_minimum(
     live_sandbox: LiveSandbox, sandbox_window: Any, qtbot: object
 ) -> None:
-    """The Plan toolbar's figure: painted in full when the row can pay, elided when it cannot."""
+    """The Plan toolbar's figure: the row pays for it at both sizes, so it never elides."""
     window = app_with_a_plan(live_sandbox, sandbox_window, qtbot)
     assert window.navigate("plan")
     figure = window.plan_page.plan.approval_label
     full = figure.full_text()
+    assert full, "the toolbar has no figure to measure"
 
-    # The toolbar asks for more than the smallest window has (label + five buttons),
-    # so the figure is the first thing to give: it may only do that with a sign.
-    window.resize(*MIN_WINDOW)
-    settle(qtbot, 400)
-    assert figure.width() < figure.fontMetrics().horizontalAdvance(full), (
-        "the toolbar fits at the shell minimum: this pin no longer describes the row"
-    )
-    assert figure.text() != full, "the figure is cut with no ellipsis"
-    assert figure.text().endswith("…"), f"the painted text is not visibly elided: {figure.text()!r}"
-    assert full in figure.toolTip(), "the full figure is not reachable"
+    for size, lines in ((MIN_WINDOW, 2), (REFERENCE_WINDOW, 1)):
+        window.resize(*size)
+        settle(qtbot, 400)
+        where = f"the plan figure at {size[0]}x{size[1]}"
+        assert figure.text() == full, (
+            f"{where}: elided to {figure.text()!r} -- the toolbar has to wrap its buttons "
+            "instead of giving the figure up"
+        )
+        assert not figure.is_elided()
+        assert figure.width() >= figure.fontMetrics().horizontalAdvance(full), (
+            f"{where}: the label is narrower than its text although the row wrapped"
+        )
+        assert row_lines(action_rows(window)["Plan toolbar"]) == lines, (
+            f"{where}: the toolbar is using {row_lines(action_rows(window)['Plan toolbar'])} "
+            f"line(s); the figure is whole only because the row wraps onto {lines}"
+        )
 
-    # At the reference size the same figure is complete.
-    window.resize(*REFERENCE_WINDOW)
-    settle(qtbot, 400)
-    assert figure.text() == full
 
-
-def test_the_list_footer_keeps_its_figure_and_elides_its_hint(
+def test_the_list_footer_wraps_instead_of_eliding(
     live_sandbox: LiveSandbox, sandbox_window: Any, qtbot: object
 ) -> None:
-    """The Opportunities footer: the figure the user confirms stays whole, the hint yields."""
+    """The Opportunities footer: the figure and the hint stay whole; the button moves down."""
     window = app_with_a_plan(live_sandbox, sandbox_window, qtbot)
     assert window.navigate("opportunities")
+    view = window.opportunities_view
+
     window.resize(*MIN_WINDOW)
     settle(qtbot, 400)
-    view = window.opportunities_view
-    figure = view.selection_label
-    assert figure.text() == figure.full_text(), (
-        f"the checked-rows figure gave up its width instead of the hint: {figure.text()!r}"
+    for name, widget in (
+        ("the checked-rows figure", view.selection_label),
+        ("the cascade hint", view.cascade_hint),
+    ):
+        assert widget.text() == widget.full_text(), (
+            f"{name} at 980x620: elided to {widget.text()!r}; the row wraps 'Build plan' "
+            "onto a second line instead"
+        )
+    assert view.build_plan_button.geometry().y() > view.selection_label.geometry().y(), (
+        "the footer kept 'Build plan' on the figure's line although the shell's minimum "
+        "is too narrow for it"
     )
-    hint = view.cascade_hint
-    assert hint.text() != hint.full_text(), "the hint kept a width the row does not have"
-    assert hint.full_text() in hint.toolTip(), "the hint elides with no way to read it in full"
+
+    window.resize(*REFERENCE_WINDOW)
+    settle(qtbot, 400)
+    assert view.selection_label.text() == view.selection_label.full_text()
+    assert view.cascade_hint.text() == view.cascade_hint.full_text()
+    assert view.build_plan_button.geometry().y() == view.selection_label.geometry().y(), (
+        "the footer wrapped at the reference size although it has the width for one line"
+    )
+
+
+def test_the_filter_bar_wraps_and_keeps_its_search_usable(
+    live_sandbox: LiveSandbox, sandbox_window: Any, qtbot: object
+) -> None:
+    """The filter bar: the search keeps its room; the two buttons take the second line."""
+    window = app_with_a_plan(live_sandbox, sandbox_window, qtbot)
+    assert window.navigate("opportunities")
+    search = window.opportunities_view.search
+    select = window.opportunities_view.select_button
+
+    window.resize(*MIN_WINDOW)
+    settle(qtbot, 400)
+    assert search.width() >= 200, (
+        f"the search field is {search.width()}px wide at the shell's minimum -- a field that "
+        "narrow cannot search (it was 46px before the bar reflowed, 158px with a plain wrap)"
+    )
+    assert select.geometry().y() > search.geometry().y(), (
+        "the filter bar kept its buttons on the search's line although the shell's minimum "
+        "is too narrow for it"
+    )
+
+    window.resize(*REFERENCE_WINDOW)
+    settle(qtbot, 400)
+    assert search.width() >= 400, (
+        f"the search field is {search.width()}px wide at the reference size: the row's "
+        "leftover width has to go to the field, not to a gap on the right"
+    )
+    assert select.geometry().y() == search.geometry().y()
+
+
+def test_the_shell_minimum_did_not_move(
+    live_sandbox: LiveSandbox, sandbox_window: Any, qtbot: object
+) -> None:
+    """The decision itself: the bars reflow, the window still goes down to 980x620."""
+    window = app_with_a_plan(live_sandbox, sandbox_window, qtbot)
+    assert window.minimumSize() == QSize(*MIN_WINDOW), (
+        "the shell's minimum changed; t_af23bb34 decided the rows reflow instead"
+    )
+    window.resize(*MIN_WINDOW)
+    settle(qtbot, 300)
+    assert window.size() == QSize(*MIN_WINDOW)

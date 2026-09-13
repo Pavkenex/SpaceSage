@@ -48,9 +48,31 @@ not understand.
   Plan toolbar's five buttons and the Undo footer's four use it.
   `tests/gui/test_min_size.py` walks every screen at 980x620 and at 1440x900
   and fails if any visible label or button caption is cut without a tooltip; it
-  failed on the code before the change. The bars themselves still need more
-  width than 980x620 gives (the Plan toolbar's minimum is 1192px), so they elide
-  where they cannot fit — see `docs/verification.md`, Known limits.
+  failed on the code before the change. The bars themselves still needed more
+  width than 980x620 gave (the Plan toolbar's minimum is 1192px), so they elided
+  where they could not fit — the entry below reflows them instead; see
+  `docs/verification.md`, Known limits.
+- **The six action bars reflow at the shell's smallest window instead of eliding
+  everything.** The bars the entry above made honest still *needed* more width
+  than a 980x620 window gives — the Plan toolbar 1192px, the Undo footer 949px,
+  the Opportunities strip's six cards 837px, the filter bar's search down to
+  46px — so at that size a user read ellipses and squeezed controls everywhere.
+  Each of the six rows is a `widgets.FlowLayout` now: a row that runs out of
+  width moves its last items onto a second line, and every figure, caption and
+  card title is whole at 980x620 *and* at 1440x900 (where all six are back on one
+  line, packed from the left — the two bars used to right-align their buttons
+  with a stretch, so at the reference size the toolbar's buttons sit 4px further
+  left than they used to and the Undo footer's hint and buttons 77px further
+  left).
+  `FlowLayout` gained the one thing a plain wrap would lose: `addWidget(widget,
+  stretch)` gives a line's leftover width to the items that ask for it, so the
+  filter bar's search keeps its full 490px at the reference size while the bar
+  still wraps at the minimum (235px there, where the old bar gave it 46px). The
+  elision the entry above added is unchanged — it stays what text no line can
+  hold falls back to. `tests/gui/test_min_size.py` walks the six rows at both
+  sizes and fails if one of them elides text it could have wrapped; five of its
+  tests failed on the code before the change. The renders are regenerated and
+  `docs/verification.md` says which rows take a second line.
 
 ## [0.1.0] - 2026-09-13
 

@@ -1,4 +1,4 @@
-24 opportunities · 221.0 MiB estimated gain · as of 2026-09-13 05:06 UTC
+24 opportunities · 221.0 MiB estimated gain · as of 2026-09-13 07:08 UTC
     55574528  T2  action       NATIVE             /tmp/spacesage-e2e/smoke/disk/Games/SteamLibrary
     37748736  T2  action       MOVE               /tmp/spacesage-e2e/smoke/disk/Users/Alice/Videos
     31457280  T2  action       NATIVE             /tmp/spacesage-e2e/smoke/disk/Games/SteamLibrary/steamapps/common/BigGame/data.pak

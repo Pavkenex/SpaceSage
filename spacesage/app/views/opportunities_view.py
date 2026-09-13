@@ -136,14 +136,15 @@ class OpportunitiesView(QWidget):
         splitter.setSizes([840, 360])
         layout.addWidget(splitter, 1)
 
-        footer = QHBoxLayout()
-        footer.setSpacing(theme.SPACE["sm"])
+        # The figure, the hint and "Build plan" need ~751px at the shell's 980px
+        # minimum: the row wraps the button onto a second line rather than eliding
+        # the hint (t_af23bb34).  The flow packs from the left.
+        footer = widgets.FlowLayout(h_spacing=theme.SPACE["sm"], v_spacing=theme.SPACE["xs"])
         self.selection_label = widgets.ElidedLabel(
             "No rows checked yet", self, mode=Qt.TextElideMode.ElideRight, claim_width=True
         )
         self.selection_label.setObjectName("Muted")
         footer.addWidget(self.selection_label)
-        footer.addStretch(1)
         self.cascade_hint = widgets.ElidedLabel(
             "Selecting a folder covers its contents: every byte is counted once.",
             self,
@@ -165,9 +166,11 @@ class OpportunitiesView(QWidget):
 
     def _build_summary_strip(self) -> QWidget:
         strip = QWidget(self)
-        row = QHBoxLayout(strip)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(theme.SPACE["sm"])
+        # Six cards need ~837px; the shell allows a 980px window, so they wrap onto
+        # a second line instead of squeezing every title into an ellipsis
+        # (t_af23bb34).
+        row = widgets.FlowLayout(h_spacing=theme.SPACE["sm"], v_spacing=theme.SPACE["sm"])
+        strip.setLayout(row)
         self.cards: dict[str, widgets.MetricCard] = {}
         for key, title, icon in (
             ("rows", "Opportunities", "list-ordered"),
@@ -185,11 +188,14 @@ class OpportunitiesView(QWidget):
     def _build_filter_bar(self) -> QWidget:
         bar = QFrame(self)
         bar.setObjectName("Card")
-        row = QHBoxLayout(bar)
+        # The bar wraps when narrow (the search keeps its stretch on the line it
+        # lands on); at the shell's 980px minimum the two buttons take a second
+        # line instead of the search being squeezed to ~46px (t_af23bb34).
+        row = widgets.FlowLayout(h_spacing=theme.SPACE["sm"], v_spacing=theme.SPACE["xs"])
+        bar.setLayout(row)
         row.setContentsMargins(
             theme.SPACE["md"], theme.SPACE["sm"], theme.SPACE["md"], theme.SPACE["sm"]
         )
-        row.setSpacing(theme.SPACE["sm"])
 
         self.search = QLineEdit(bar)
         self.search.setPlaceholderText("Search paths, solutions and reasons")

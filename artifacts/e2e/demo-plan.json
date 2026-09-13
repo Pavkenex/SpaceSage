@@ -1,11 +1,11 @@
 {
   "schema": "spacesage.plan/v1",
-  "plan_id": "sha256:6251c6a4e3926088725a20b8d5634546fe8cf260d20cdbc68a79d19a1022a6d9",
-  "created": "2026-09-13T05:07:17+00:00",
+  "plan_id": "sha256:f2e58fcc29d8480e3db899d93b174a497fedc85814e31d3b530de9ca80f8973d",
+  "created": "2026-09-13T07:08:38+00:00",
   "source": {
     "csv": "/tmp/spacesage-e2e/full-disk.csv",
-    "machine": "fa60b8075e9e",
-    "exported": "2026-09-13T05:06:34+00:00"
+    "machine": "a94470049564",
+    "exported": "2026-09-13T07:08:12+00:00"
   },
   "targets": {
     "/var/tmp/spacesage-e2e-target": {
@@ -16,7 +16,7 @@
   "provenance": {
     "db": "/tmp/spacesage-e2e/index",
     "schema_version": 3,
-    "as_of": "2026-09-13T05:07:17+00:00",
+    "as_of": "2026-09-13T07:08:38+00:00",
     "rules_fingerprint": "699c1ce6139d281425b9301aeb786cf475406b1fa1a1e4f131bab0dd5c53130f",
     "min_size": 1048576,
     "top": 0,

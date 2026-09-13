@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLayout,
     QListWidget,
     QListWidgetItem,
     QProgressBar,
@@ -233,9 +234,12 @@ class UndoView(QWidget):
         column.addWidget(self._table, 1)
         return page
 
-    def _build_footer(self) -> QHBoxLayout:
-        footer = QHBoxLayout()
-        footer.setSpacing(theme.SPACE["sm"])
+    def _build_footer(self) -> QLayout:
+        # The figure and four buttons need ~950px; the shell allows a 980px window,
+        # so the row wraps onto a second line at the minimum instead of eliding the
+        # captions -- "Revert all pending" is the destructive action of this screen
+        # (t_af23bb34).  The flow packs from the left.
+        footer = widgets.FlowLayout(h_spacing=theme.SPACE["sm"], v_spacing=theme.SPACE["xs"])
 
         self.selection_label = widgets.ElidedLabel(
             "Nothing checked: nothing will be reverted",
@@ -245,7 +249,6 @@ class UndoView(QWidget):
         )
         self.selection_label.setObjectName("Muted")
         footer.addWidget(self.selection_label)
-        footer.addStretch(1)
 
         self.hint_label = QLabel(
             "A revert verifies every payload on the way back; a blocked operation stays pending.",
