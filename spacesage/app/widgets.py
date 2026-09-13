@@ -24,6 +24,7 @@ from PySide6.QtGui import (
     QDragEnterEvent,
     QDragLeaveEvent,
     QDropEvent,
+    QFontMetrics,
     QKeyEvent,
     QResizeEvent,
     QTextCursor,
@@ -39,6 +40,8 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QStyle,
+    QStyleOptionButton,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -273,15 +276,51 @@ def mono_label(text: str, parent: QWidget | None = None) -> QLabel:
     return label
 
 
+# --------------------------------------------------------------------------- #
+# Text that is never cut without a sign
+# --------------------------------------------------------------------------- #
+
+
+def _fitted_text(metrics: QFontMetrics, text: str, mode: Qt.TextElideMode, width: int) -> str:
+    """``text`` elided to ``width`` -- or whole, when it fits exactly.
+
+    Qt's ``elidedText`` reserves room for the ellipsis it may append, so a line
+    that fits its width exactly still comes back cut: paint it whole when it does
+    fit, and let a row that leaves less than it needs show the ellipsis.
+    """
+    if width <= 0 or metrics.horizontalAdvance(text) <= width:
+        return text
+    return metrics.elidedText(text, mode, width)
+
+
+def _help_tooltip(full: str, painted: str, tip: str) -> str:
+    """The tooltip that keeps ``full`` reachable while ``painted`` is less than it."""
+    if painted != full and full and full not in tip:
+        return f"{full}\n\n{tip}" if tip else full
+    return tip
+
+
 class ElidedLabel(QLabel):
     """A single-line label that elides instead of clipping.
 
     A workspace path or a plan id is longer than any row it sits in, and a plain
     ``QLabel`` simply paints past its edge: the user reads half a path with no
     sign that anything is missing (design §9.1).  This one keeps the full text
-    available (``full_text()``) and elides to the width it was given -- middle
-    for a path, where the tail is the part that identifies it, right for a
-    sentence.
+    available (``full_text()``), elides to the width it was given -- middle for a
+    path, where the tail is the part that identifies it, right for a sentence --
+    and hands the full text over in its tooltip whenever it had to elide.
+
+    ``claim_width`` says how the label asks for room, because a row has to decide
+    who claims width and who yields:
+
+    * ``False`` (the default) -- the label asks for nothing (``Ignored``) and
+      takes what the row leaves it: for a path, which is long by nature and whose
+      tail is what identifies it.
+    * ``True`` -- the label asks for the width its full text needs, exactly as a
+      plain label would, so a row short of room shrinks it *last*; and when the
+      row cannot pay after all (Qt goes below a minimum when nothing else is
+      left, measured at 980x620 on the Plan toolbar), the figure elides visibly
+      instead of painting past its edge.
     """
 
     def __init__(
@@ -290,33 +329,186 @@ class ElidedLabel(QLabel):
         parent: QWidget | None = None,
         *,
         mode: Qt.TextElideMode = Qt.TextElideMode.ElideMiddle,
+        claim_width: bool = False,
     ) -> None:
         super().__init__("", parent)
         self._full = text
         self._mode = mode
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.setMinimumWidth(80)
+        self._claim = claim_width
+        self._tip = ""
+        if claim_width:
+            self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        else:
+            self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            self.setMinimumWidth(80)
         self.setText(text)
+
+    # -- what the label was given, and what it is showing ------------------ #
 
     def setText(self, text: str) -> None:
         """Set the full text; what is painted is elided to the current width."""
         self._full = text
         super().setText(self._fitted())
+        self._sync_tooltip()
 
     def full_text(self) -> str:
         """The text this label was given, elided or not."""
         return self._full
 
+    def is_elided(self) -> bool:
+        """Whether the label is painting less than the text it was given."""
+        return self.text() != self._full
+
+    def setToolTip(self, tip: str) -> None:
+        """Set the label's own tooltip; the full text leads it while elided."""
+        self._tip = tip
+        self._sync_tooltip()
+
+    # -- QLabel plumbing --------------------------------------------------- #
+
+    def sizeHint(self) -> QSize:
+        """The width the full text needs, for a label that claims width."""
+        hint = super().sizeHint()
+        if self._claim:
+            hint.setWidth(self._needed())
+        return hint
+
+    def minimumSizeHint(self) -> QSize:
+        """How narrow a claiming label may get: the width of its full text."""
+        return self.sizeHint() if self._claim else super().minimumSizeHint()
+
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         super().setText(self._fitted())
+        self._sync_tooltip()
+
+    # -- internals --------------------------------------------------------- #
 
     def _fitted(self) -> str:
         """The full text, elided to the painted width (never a cut-off glyph)."""
-        width = self.contentsRect().width()
-        if width <= 0:
-            return self._full
-        return self.fontMetrics().elidedText(self._full, self._mode, width)
+        return _fitted_text(self.fontMetrics(), self._full, self._mode, self.contentsRect().width())
+
+    def _needed(self) -> int:
+        """How much width the full text and this label's margins need."""
+        margins = self.contentsMargins()
+        return self.fontMetrics().horizontalAdvance(self._full) + margins.left() + margins.right()
+
+    def _sync_tooltip(self) -> None:
+        """Keep the full text one hover away whenever it is not all painted."""
+        super().setToolTip(_help_tooltip(self._full, self.text(), self._tip))
+        # A screen reader is told the text the label was given, not the cut one.
+        super().setAccessibleName(self._full if self.is_elided() else "")
+
+
+def _button_option(button: QPushButton) -> QStyleOptionButton:
+    """A push button as the style sees it, for its own metrics."""
+    option = QStyleOptionButton()
+    option.initFrom(button)
+    option.rect = button.rect()
+    option.text = button.text()
+    option.icon = button.icon()
+    option.iconSize = button.iconSize()
+    return option
+
+
+def caption_room(button: QPushButton) -> int:
+    """How much width a push button's style leaves for its caption.
+
+    Public because the pinning test measures plain buttons with it as well: a
+    caption that needs more than this room is painted with its ends missing.
+    """
+    option = _button_option(button)
+    room = (
+        button.style()
+        .subElementRect(QStyle.SubElement.SE_PushButtonContents, option, button)
+        .width()
+    )
+    if not option.icon.isNull():
+        # The contents rect covers icon and text; the icon takes its size and the
+        # style's fixed 4px gap on the left (QCommonStyle::CE_PushButtonLabel).
+        room -= option.iconSize.width() + 4
+    return room
+
+
+class ElidedButton(QPushButton):
+    """A push button whose caption elides instead of being cut (design §9.1).
+
+    A plain ``QPushButton`` clips its label where the button ends: on the Undo
+    bar measured at the shell's minimum size (980x620), ``Revert all pending``
+    reaches the screen as ``vert all pendin`` -- the middle of a caption on the
+    destructive action of the screen, with no ellipsis and no sign that a word is
+    missing.  This one keeps the caption (``full_text()``), asks for the width it
+    needs, and when the row cannot pay it paints an ellipsis and hands the whole
+    caption over in its tooltip, above the tooltip the button already had.
+    """
+
+    def __init__(
+        self,
+        text: str = "",
+        parent: QWidget | None = None,
+        *,
+        mode: Qt.TextElideMode = Qt.TextElideMode.ElideRight,
+    ) -> None:
+        super().__init__("", parent)
+        self._full = text
+        self._mode = mode
+        self._tip = ""
+        self.setText(text)
+
+    # -- what the button was given, and what it is showing ------------------ #
+
+    def setText(self, text: str) -> None:
+        """Set the full caption; what is painted is elided to the room it has."""
+        self._full = text
+        super().setText(self._fitted())
+        self._sync_tooltip()
+
+    def full_text(self) -> str:
+        """The caption this button was given, elided or not."""
+        return self._full
+
+    def is_elided(self) -> bool:
+        """Whether the button is painting less than the caption it was given."""
+        return self.text() != self._full
+
+    def setToolTip(self, tip: str) -> None:
+        """Set the button's own tooltip; the full caption leads it while elided."""
+        self._tip = tip
+        self._sync_tooltip()
+
+    # -- QPushButton plumbing ---------------------------------------------- #
+
+    def sizeHint(self) -> QSize:
+        """The size the whole caption needs, so the row shrinks others first."""
+        hint = super().sizeHint()
+        hint.setWidth(hint.width() + self._caption_slack())
+        return hint
+
+    def minimumSizeHint(self) -> QSize:
+        """What the button may be asked for: the same, and never less."""
+        return self.sizeHint()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        super().setText(self._fitted())
+        self._sync_tooltip()
+
+    # -- internals --------------------------------------------------------- #
+
+    def _caption_slack(self) -> int:
+        """How much wider the whole caption is than the part now painted."""
+        metrics = self.fontMetrics()
+        return metrics.horizontalAdvance(self._full) - metrics.horizontalAdvance(self.text())
+
+    def _fitted(self) -> str:
+        """The full caption, elided to the room the style leaves for the text."""
+        return _fitted_text(self.fontMetrics(), self._full, self._mode, caption_room(self))
+
+    def _sync_tooltip(self) -> None:
+        """Keep the full caption one hover away whenever it is not all painted."""
+        super().setToolTip(_help_tooltip(self._full, self.text(), self._tip))
+        # A screen reader is told the caption the button was given, not the cut one.
+        super().setAccessibleName(self._full if self.is_elided() else "")
 
 
 class LogPanel(QPlainTextEdit):
@@ -413,12 +605,15 @@ class MetricCard(QFrame):
         else:
             self._icon.setPixmap(icons.icon(icon_name, theme.tokens().muted, 14).pixmap(14, 14))
         head.addWidget(self._icon)
-        self._title = section_label(title, self)
+        self._title = ElidedLabel(
+            title.upper(), self, mode=Qt.TextElideMode.ElideRight, claim_width=True
+        )
+        self._title.setObjectName("SectionTitle")
         head.addWidget(self._title)
         head.addStretch(1)
         layout.addLayout(head)
 
-        self._value = QLabel(value, self)
+        self._value = ElidedLabel(value, self, mode=Qt.TextElideMode.ElideRight, claim_width=True)
         self._value.setStyleSheet(
             f"font-size: {theme.TYPE_SCALE['lg']}px; font-weight: 700;"
             f" color: {theme.tokens().text};"
@@ -442,8 +637,8 @@ class MetricCard(QFrame):
         return self._caption.text()
 
     def value(self) -> str:
-        """The value currently shown."""
-        return self._value.text()
+        """The value this card carries (what it paints, elided or not)."""
+        return self._value.full_text()
 
 
 class EmptyState(QWidget):

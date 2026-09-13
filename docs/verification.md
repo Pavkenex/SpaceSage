@@ -113,12 +113,30 @@ card):
   exited 0), hence the session-wide guard. The app's own runs have not been
   observed to abort (the leak direction dominates there), but their counts are
   wrong in the same way; card t_1b70d03f carries the measurements.
-- **The bars clip at the smallest window.** Measured on the shell's minimum
-  size (980x620): the Plan screen's approval line paints 137px of the 599px it
-  needs and the Opportunities hint 366px of 398px. At the reference size
-  (1440x900) everything fits. The pass asserts the figures it captures, so a
-  regression at the reference size fails the build; the narrow-window layout is
-  tracked separately.
+- **At the smallest window the bars elide; they no longer clip.** The shell
+  allows a 980x620 window (`MainWindow.setMinimumSize`) and several rows need
+  more width than that, so what cannot fit now gives way *with a sign*: the Plan
+  toolbar's figure paints `0 of 0 executable actions approved · 0 B to recla…`
+  (137px given, 599px needed on the full-disk plan this page measures), the
+  Opportunities hint `Selecting a folder covers its contents: every byte is
+  counted on…` (392px of the 398px it needs), the Undo footer's figure, and the
+  summary strip's card titles (`ESTIMAT…`). The two squeezed bars also elide
+  captions they cannot pay for: `Dry-run preview`,
+  `Open journal file…`, `Revert selected` and `Revert all pending` -- the last
+  one is what the destructive action of the Undo screen says at that size, and
+  a plain `QPushButton` cut it at *both* ends (`vert all pendin`). Every elided
+  bar hands its full text over in a tooltip, and `tests/gui/test_min_size.py`
+  walks every screen at 980x620 *and* at 1440x900 and fails if any visible label
+  or button caption is cut without one; it failed on the code before the fix,
+  for the label and for the caption. What no label or caption can fix is the
+  row itself: at 980x620 the Plan toolbar asks for 1192-1205px (its five
+  buttons at their minimums plus the figure -- 1192px in the state this page
+  measures, 1205px on the S12 plan) and is given 736px, the Undo footer's four
+  buttons plus its figure need more than the row has, the summary strip's five
+  cards are squeezed, the filter bar's search box is given 46px and the Plan
+  table needs its horizontal scrollbar. Those bars
+  have to reflow (or the shell has to raise its minimum) before they *fit*;
+  they are honest about it until then.
 
 ## Where every slice's feature lives
 
@@ -138,6 +156,7 @@ card):
 | S10b | AI in the list | `spacesage/app/ai_models.py`, `spacesage/app/views/opportunities_view.py`, `spacesage/app/views/settings_view.py` | `tests/gui/test_ai_screen.py` | `docs/ai.md` |
 | S11 | Packaging and the guide | `packaging/spacesage.spec`, `packaging/win_version.py`, `scripts/make_app_icons.py`, `spacesage/app/assets/` | `tests/test_packaging.py` | `docs/design.md` §14, `docs/app-guide.md` |
 | S12 | Acceptance pass and v0.1.0 | `tests/e2e/` | `tests/e2e/test_pipeline_e2e.py`, `tests/e2e/test_gui_smoke.py` | this page, `CHANGELOG.md` |
+| S12b | The smallest window: bars elide, never clip | `spacesage/app/widgets.py` (`ElidedLabel`, `ElidedButton`, `caption_room`), `spacesage/app/views/plan_view.py`, `views/opportunities_view.py`, `views/undo_view.py` | `tests/gui/test_min_size.py` | this page, `docs/design.md` §9.1 |
 
 The module list is the same one `README.md` and `docs/design.md` carry; this
 table only says *which slice* put it there and which tests hold it up.

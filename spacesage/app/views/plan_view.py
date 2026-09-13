@@ -356,34 +356,36 @@ class PlanView(QWidget):
         )
         row.setSpacing(theme.SPACE["sm"])
 
-        self.approval_label = QLabel("", bar)
+        self.approval_label = widgets.ElidedLabel(
+            "", bar, mode=Qt.TextElideMode.ElideRight, claim_width=True
+        )
         self.approval_label.setObjectName("Muted")
         row.addWidget(self.approval_label)
         row.addStretch(1)
 
-        self.approve_all_button = QPushButton("Approve all", bar)
+        self.approve_all_button = widgets.ElidedButton("Approve all", bar)
         self.approve_all_button.setToolTip("Approve every executable action (advice stays advice)")
         self.approve_all_button.clicked.connect(self.approve_all)
         row.addWidget(self.approve_all_button)
 
-        self.reject_all_button = QPushButton("Take all out", bar)
+        self.reject_all_button = widgets.ElidedButton("Take all out", bar)
         self.reject_all_button.setToolTip("Approve nothing: the plan stays a record")
         self.reject_all_button.clicked.connect(self.reject_all)
         row.addWidget(self.reject_all_button)
 
-        self.preview_button = QPushButton("Dry-run preview", bar)
+        self.preview_button = widgets.ElidedButton("Dry-run preview", bar)
         self.preview_button.setToolTip(
             f"Resolve every approved action without touching anything ({DRY_RUN_SHORTCUT})"
         )
         self.preview_button.clicked.connect(lambda: self.dry_run(show=True))
         row.addWidget(self.preview_button)
 
-        self.undo_button = QPushButton("Undo…", bar)
+        self.undo_button = widgets.ElidedButton("Undo…", bar)
         self.undo_button.setToolTip("The journal history of everything SpaceSage executed")
         self.undo_button.clicked.connect(self.goToUndo.emit)
         row.addWidget(self.undo_button)
 
-        self.execute_button = QPushButton("Execute…", bar)
+        self.execute_button = widgets.ElidedButton("Execute…", bar)
         self.execute_button.setObjectName("Primary")
         self.execute_button.setToolTip(
             f"Run the approved actions, journaled and undoable ({EXECUTE_SHORTCUT})"

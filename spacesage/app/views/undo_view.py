@@ -237,7 +237,12 @@ class UndoView(QWidget):
         footer = QHBoxLayout()
         footer.setSpacing(theme.SPACE["sm"])
 
-        self.selection_label = QLabel("Nothing checked: nothing will be reverted", self)
+        self.selection_label = widgets.ElidedLabel(
+            "Nothing checked: nothing will be reverted",
+            self,
+            mode=Qt.TextElideMode.ElideRight,
+            claim_width=True,
+        )
         self.selection_label.setObjectName("Muted")
         footer.addWidget(self.selection_label)
         footer.addStretch(1)
@@ -251,7 +256,7 @@ class UndoView(QWidget):
         self.hint_label.setWordWrap(True)
         footer.addWidget(self.hint_label)
 
-        self.open_button = QPushButton("Open journal file…", self)
+        self.open_button = widgets.ElidedButton("Open journal file…", self)
         self.open_button.setObjectName("Quiet")
         self.open_button.setIcon(icons.tone_icon("folder-open", "accent", 14))
         self.open_button.setToolTip(
@@ -260,13 +265,13 @@ class UndoView(QWidget):
         self.open_button.clicked.connect(self._browse)
         footer.addWidget(self.open_button)
 
-        self.refresh_button = QPushButton("Refresh", self)
+        self.refresh_button = widgets.ElidedButton("Refresh", self)
         self.refresh_button.setIcon(icons.tone_icon("refresh-cw", "muted", 14))
         self.refresh_button.setToolTip("Reload the journal history")
         self.refresh_button.clicked.connect(self.refresh)
         footer.addWidget(self.refresh_button)
 
-        self.revert_selected_button = QPushButton("Revert selected", self)
+        self.revert_selected_button = widgets.ElidedButton("Revert selected", self)
         self.revert_selected_button.setObjectName("Danger")
         self.revert_selected_button.setToolTip(
             "Revert the checked operations and verify every payload on the way back"
@@ -274,7 +279,7 @@ class UndoView(QWidget):
         self.revert_selected_button.clicked.connect(self._revert_selected)
         footer.addWidget(self.revert_selected_button)
 
-        self.revert_all_button = QPushButton("Revert all pending", self)
+        self.revert_all_button = widgets.ElidedButton("Revert all pending", self)
         self.revert_all_button.setObjectName("Danger")
         self.revert_all_button.setToolTip(
             "Revert every pending operation in this journal, newest first"

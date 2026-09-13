@@ -21,6 +21,21 @@ not understand.
   CPython 3.12 does natively, and `tests/gui/test_shutdown_guard.py` holds both
   halves: twenty thousand event loop turns exit 0, and without the guard the
   same child dies at exit. No production code changes.
+- **The action bars no longer clip at the shell's smallest window.** At 980x620
+  a row can need more width than it is given, and a plain `QLabel` or
+  `QPushButton` then paints past its own edge: the Plan toolbar's figure read
+  `0 of 0 executable actions approved · 0 B to recla…` with nothing to say a
+  word was missing, and `Revert all pending` on the Undo footer was cut at
+  *both* ends (`vert all pendin`) on the destructive action of that screen. The
+  bars' figures and the captions they squeeze now elide instead — visibly, with
+  the whole text one hover away: `ElidedLabel` gained `claim_width` and the
+  "a line that fits exactly is not elided" fix, `ElidedButton` is new, and the
+  Plan toolbar's five buttons and the Undo footer's four use it.
+  `tests/gui/test_min_size.py` walks every screen at 980x620 and at 1440x900
+  and fails if any visible label or button caption is cut without a tooltip; it
+  failed on the code before the change. The bars themselves still need more
+  width than 980x620 gives (the Plan toolbar's minimum is 1192px), so they elide
+  where they cannot fit — see `docs/verification.md`, Known limits.
 
 ## [0.1.0] - 2026-09-13
 

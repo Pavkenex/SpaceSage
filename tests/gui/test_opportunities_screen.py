@@ -99,7 +99,10 @@ def test_checking_a_folder_covers_its_contents(
     assert child_row is not None and folder_row is not None
     assert selection.is_covered(child_row.key)
     assert selection.gain == folder_row.gain  # not folder + child
-    assert "estimated gain" in window.opportunities_view.selection_label.text()
+    # The footer figure: the label paints an elided form of it when the row is
+    # short of room, so the content lives in full_text() (test_min_size pins what
+    # is painted, at both window sizes).
+    assert "estimated gain" in window.opportunities_view.selection_label.full_text()
 
     # Clicking the covered child moves the selection down to it.
     model.toggle(VIDEOS_CLIP)

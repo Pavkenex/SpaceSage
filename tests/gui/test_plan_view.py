@@ -190,7 +190,7 @@ def test_building_from_the_list_lands_on_the_plan_page(
         model.toggle(path)
     assert len(model.selection) == len(live_sandbox.selection())
     assert opportunities_view.build_plan_button.isEnabled()
-    checked = opportunities_view.selection_label.text()
+    checked = opportunities_view.selection_label.full_text()
     assert checked.startswith(f"{len(live_sandbox.selection())} checked")
     assert "estimated gain" in checked
 
@@ -827,7 +827,9 @@ def test_the_full_loop_executes_and_undo_restores_the_tree(
     assert len(model.selection) == len(live_sandbox.selection())
     selected_bytes = model.selection.gain
     assert selected_bytes > 0
-    assert stats.format_bytes(selected_bytes) in (window.opportunities_view.selection_label.text())
+    assert stats.format_bytes(selected_bytes) in (
+        window.opportunities_view.selection_label.full_text()
+    )
 
     # 2. Build one plan from them.
     window.opportunities_view.build_plan_button.click()

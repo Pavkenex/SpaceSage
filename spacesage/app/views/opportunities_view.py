@@ -138,12 +138,17 @@ class OpportunitiesView(QWidget):
 
         footer = QHBoxLayout()
         footer.setSpacing(theme.SPACE["sm"])
-        self.selection_label = QLabel("No rows checked yet", self)
+        self.selection_label = widgets.ElidedLabel(
+            "No rows checked yet", self, mode=Qt.TextElideMode.ElideRight, claim_width=True
+        )
         self.selection_label.setObjectName("Muted")
         footer.addWidget(self.selection_label)
         footer.addStretch(1)
-        self.cascade_hint = QLabel(
-            "Selecting a folder covers its contents: every byte is counted once.", self
+        self.cascade_hint = widgets.ElidedLabel(
+            "Selecting a folder covers its contents: every byte is counted once.",
+            self,
+            mode=Qt.TextElideMode.ElideRight,
+            claim_width=True,
         )
         self.cascade_hint.setObjectName("Faint")
         footer.addWidget(self.cascade_hint)
