@@ -9,7 +9,17 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 
-from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QModelIndex,
+    QObject,
+    QPoint,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QDragEnterEvent,
     QDragLeaveEvent,
@@ -24,6 +34,8 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLayout,
+    QLayoutItem,
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
@@ -33,6 +45,95 @@ from PySide6.QtWidgets import (
 )
 
 from spacesage.app import icons, theme
+
+# --------------------------------------------------------------------------- #
+# A layout that wraps
+# --------------------------------------------------------------------------- #
+
+
+class FlowLayout(QLayout):
+    """A layout that moves what does not fit onto the next line.
+
+    Qt has no wrapping layout, and a row of badges, chips or buttons is exactly
+    the case that needs one: a ``QHBoxLayout`` silently clips whatever does not
+    fit -- buttons included -- when its parent shrinks.  Rows built from
+    :class:`FlowLayout` instead reflow, so a resizable pane never hides a control.
+
+    The standard Qt idiom: the layout keeps its own items, reports a minimum
+    width of its widest item (never the sum) and implements ``heightForWidth`` so
+    the row's height follows the wrapping.
+    """
+
+    def __init__(
+        self,
+        *,
+        h_spacing: int = theme.SPACE["xs"],
+        v_spacing: int = theme.SPACE["xs"],
+    ) -> None:
+        super().__init__()
+        self._items: list[QLayoutItem] = []
+        self._h_spacing = h_spacing
+        self._v_spacing = v_spacing
+        self.setContentsMargins(0, 0, 0, 0)
+
+    # -- QLayout plumbing -------------------------------------------------- #
+
+    def addItem(self, item: QLayoutItem) -> None:
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int) -> QLayoutItem | None:
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index: int) -> QLayoutItem | None:
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self) -> Qt.Orientation:
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        return self._arrange(QRect(0, 0, width, 0), apply=False)
+
+    def setGeometry(self, rect: QRect) -> None:
+        super().setGeometry(rect)
+        self._arrange(rect, apply=True)
+
+    def sizeHint(self) -> QSize:
+        return self.minimumSize()
+
+    def minimumSize(self) -> QSize:
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        margins = self.contentsMargins()
+        return size + QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
+
+    # -- the wrap ---------------------------------------------------------- #
+
+    def _arrange(self, rect: QRect, *, apply: bool) -> int:
+        """Place every item left to right, dropping to a new line when it does not fit."""
+        margins = self.contentsMargins()
+        area = rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom())
+        x, y, line_height = area.x(), area.y(), 0
+        for item in self._items:
+            hint = item.sizeHint()
+            next_x = x + hint.width() + self._h_spacing
+            if next_x - self._h_spacing > area.right() and line_height > 0:
+                x = area.x()
+                y += line_height + self._v_spacing
+                next_x = x + hint.width() + self._h_spacing
+                line_height = 0
+            if apply:
+                item.setGeometry(QRect(QPoint(x, y), hint))
+            x = next_x
+            line_height = max(line_height, hint.height())
+        return y + line_height - rect.y() + margins.bottom()
+
 
 # --------------------------------------------------------------------------- #
 # Tones

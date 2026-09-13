@@ -20,7 +20,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from spacesage import __version__
-from spacesage.app import state, theme
+from spacesage.app import ai_models, state, theme
 from spacesage.app.windows import MainWindow
 
 SELF_CHECK_FLAG = "--self-check"
@@ -127,6 +127,7 @@ def create_window(
     db_path: Path | None = None,
     data_root: Path | None = None,
     theme_manager: theme.ThemeManager | None = None,
+    ai_service: ai_models.AIService | None = None,
 ) -> MainWindow:
     """Build the main window for an existing QApplication (tests use this)."""
     window = MainWindow(
@@ -134,6 +135,7 @@ def create_window(
         db_path=db_path if db_path is not None else state.index_path(),
         data_root=data_root,
         theme_manager=theme_manager,
+        ai_service=ai_service,
     )
     if theme_manager is not None:
         theme_manager.changed.connect(lambda _scheme: window.apply_theme())

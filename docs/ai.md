@@ -222,6 +222,45 @@ Linux/macOS, `%APPDATA%\spacesage\rules\ai-promoted.toml` on Windows
 - Promoted rules are user-pack rules, tried before the built-in packs
   ([`rules.md`](rules.md)).
 
+## In the app
+
+The app is the product surface (design.md §9.4); the CLI below exists for development
+and automation. Nothing the AI produces is ever directly executable: an answer becomes
+a suggestion, an annotation or a rule proposal that a human accepts.
+
+- **Opportunities — *Generate AI suggestions***. A pre-flight dialog states how many
+  rows are undecided, what the run would cost (calls, cache hits, tokens) and what
+  leaves the machine (`estimate_lines` / `privacy_lines`); the fill then runs in bounded
+  background batches and the list repaints as each batch lands. Rows answered before
+  fill from the cache instead — "Everything in view was answered before: filling from
+  the cache", zero calls. The Suggested-solution column carries its provenance: the rule
+  that decided, or the AI verdict with the model name. A *No action* answer renders
+  muted, as advice, never as work.
+- **Details pane — per-row AI**. *Suggest with AI* and *Classify with AI* ask about the
+  row on screen, *Explain with AI* streams its answer into the explanation card, and the
+  verdict renders as badges (action, provenance, confidence, `cached`). The AI card comes
+  into view when the request is made. A provider that is unreachable, refuses or has no
+  key paints its coded error inline in the card (`set_ai_error`); the list, the plan and
+  the session survive it.
+- **Apply as rule…** builds the exact rule TOML from the engine's own answer
+  (`spacesage.ai.promote`, dry run first), shows it in a preview, and writes it only
+  after confirmation; the listing is re-ranked so those items match instantly from the
+  built-in engine. Tiers the executor may not touch are refused with the engine's own
+  sentence.
+- **Plan — *Review plan with AI*** attaches severity-tagged annotations to the plan's
+  own action ids and shows a summary card; an annotation can be taken out of the plan,
+  but a plan's action list is only ever written by the rule engine.
+- **Settings** owns the provider list (add / edit / remove, presets for ollama, lmstudio,
+  openai, openrouter and a custom endpoint), *Test connection* (the models the endpoint
+  offers and the latency), the default provider, and the three switches that decide what
+  leaves the machine: `redact_paths`, local-only and streaming.
+- **Status bar** carries one line about the layer — "AI off", "AI not ready: …" or the
+  provider and model — and the session cost meter (tokens and estimated cost) once the
+  AI is on.
+- **States**: off until a provider is configured (the actions are disabled and say "No
+  provider yet — add one in Settings (AI)"), every failure is a coded error with its
+  hint, and async results arrive as a toast over the bar that started them.
+
 ## Internal CLI
 
 The AI layer is drivable headlessly (development, CI and automation; the product

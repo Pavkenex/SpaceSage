@@ -707,6 +707,7 @@ class AIEngine:
         max_items: int | None = None,
         context: Mapping[str, Any] | None = None,
         on_progress: Callable[[BatchProgress], None] | None = None,
+        on_results: Callable[[Mapping[str, Any]], None] | None = None,
         cancel: Any = None,
         use_cache: bool = True,
     ) -> SuggestOutcome:
@@ -719,6 +720,7 @@ class AIEngine:
             batch_size=batch_size,
             max_items=max_items,
             on_progress=on_progress,
+            on_results=on_results,
             cancel=cancel,
             use_cache=use_cache,
         )
@@ -732,6 +734,7 @@ class AIEngine:
         max_items: int | None = None,
         context: Mapping[str, Any] | None = None,
         on_progress: Callable[[BatchProgress], None] | None = None,
+        on_results: Callable[[Mapping[str, Any]], None] | None = None,
         cancel: Any = None,
         use_cache: bool = True,
     ) -> ClassifyOutcome:
@@ -744,6 +747,7 @@ class AIEngine:
             batch_size=batch_size,
             max_items=max_items,
             on_progress=on_progress,
+            on_results=on_results,
             cancel=cancel,
             use_cache=use_cache,
         )

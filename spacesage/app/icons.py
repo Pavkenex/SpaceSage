@@ -71,24 +71,50 @@ def tone_icon(name: str, tone: str, size: int = 16) -> QIcon:
     return icon(name, foreground, size)
 
 
-def action_icon(action: str, size: int = 16) -> QIcon:
-    """The icon that goes with a solution (the design's suggested-solution set)."""
-    mapping = {
-        "DELETE_QUARANTINE": "trash-2",
-        "MOVE": "arrow-right-left",
-        "COMPRESS_NTFS": "minimize-2",
-        "NATIVE": "terminal",
-        "REVIEW": "help-circle",
-        "KEEP": "shield-check",
-    }
-    return tone_icon(mapping.get(action, "info"), _ACTION_TONES.get(action, "muted"), size)
+ACTION_ICONS: dict[str, str] = {
+    "DELETE_QUARANTINE": "trash-2",
+    "MOVE": "arrow-right-left",
+    "COMPRESS_NTFS": "minimize-2",
+    "COMPRESS": "minimize-2",
+    "NATIVE": "terminal",
+    "LINK": "link-2",
+    "REVIEW": "help-circle",
+    "KEEP": "shield-check",
+    "NO_ACTION": "shield-check",
+}
+"""The icon of each action, in both vocabularies the UI carries.
 
+The engine's names (``COMPRESS_NTFS``, ``KEEP``) arrive on rule verdicts, the
+AI-side ones (``COMPRESS``, ``LINK``, ``NO_ACTION`` -- see
+:data:`spacesage.ai.prompts.AI_ACTIONS`) on AI advice, and both are painted by
+the same list: an AI answer must not fall back to a generic glyph beside a rule
+verdict for the same kind of work.
+"""
 
-_ACTION_TONES: dict[str, str] = {
+ACTION_TONES: dict[str, str] = {
     "DELETE_QUARANTINE": "danger",
     "MOVE": "accent",
     "COMPRESS_NTFS": "info",
+    "COMPRESS": "info",
     "NATIVE": "info",
+    "LINK": "info",
     "REVIEW": "warning",
     "KEEP": "success",
+    "NO_ACTION": "muted",
 }
+"""The semantic tone of each action, in both vocabularies."""
+
+
+def action_icon_name(action: str) -> str:
+    """The icon name for one action, in either vocabulary (``info`` when unknown)."""
+    return ACTION_ICONS.get(action, "info")
+
+
+def action_tone(action: str) -> str:
+    """The tone for one action, in either vocabulary (``muted`` when unknown)."""
+    return ACTION_TONES.get(action, "muted")
+
+
+def action_icon(action: str, size: int = 16) -> QIcon:
+    """The icon that goes with a solution (the design's suggested-solution set)."""
+    return tone_icon(action_icon_name(action), action_tone(action), size)

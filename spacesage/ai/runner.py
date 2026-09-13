@@ -3,7 +3,8 @@
 A run is planned before it starts - the batches are grouped by ``batch_size`` and
 by the prompt budget, the ones already in the cache are counted, and the whole
 thing is estimated (tokens and money) - and then executed batch by batch, once,
-with a progress tick after each one so the UI can fill rows incrementally.
+with a progress tick after each one and that batch's own answers handed to
+``on_results``, so a list fills in row by row while the run is still going.
 
 Failure policy: a batch that fails is recorded and the run keeps going, because
 one rate-limited request should not cost the user the other 40 items.  A run
@@ -116,6 +117,13 @@ class BatchRunner:
     cancel: Any = None
     use_cache: bool = True
     context: Mapping[str, Any] | None = None
+    on_results: Callable[[Mapping[str, Any]], None] | None = None
+    """Called with *one batch's* answers as it lands, so a list can fill in.
+
+    The GUI's batch action needs this: rows update batch by batch instead of all
+    at once when the run ends.  ``on_progress`` reports the counters, this
+    reports the answers themselves (path key -> suggestion/classification).
+    """
 
     # -- bounds ------------------------------------------------------------- #
 
@@ -231,6 +239,8 @@ class BatchRunner:
                 answers = _by_path(outcome)
                 results.update(answers)
                 rejected.extend(_rejected(outcome))
+                if answers:
+                    self._results(answers)
                 if not answers and batch:
                     # A valid-looking answer that names only paths outside the
                     # batch (or none at all): the rows stay missing, and that is
@@ -318,6 +328,12 @@ class BatchRunner:
             VerdictOutcome,
             self.engine.suggest_batch(list(batch), context=self.context, use_cache=self.use_cache),
         )
+
+    def _results(self, answers: Mapping[str, Any]) -> None:
+        """Hand one batch's freshly validated answers to the caller (if it wants them)."""
+        if self.on_results is None:
+            return
+        self.on_results(dict(answers))
 
     def _tick(
         self,

@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from spacesage import opportunities
-from spacesage.app import icons, state, theme, widgets
+from spacesage.app import ai_models, icons, state, theme, widgets
 from spacesage.app.views.import_view import ImportView
 from spacesage.app.views.opportunities_view import OpportunitiesView
 from spacesage.app.views.plan_view import PlanPage
@@ -51,6 +51,7 @@ class MainWindow(QMainWindow):
         db_path: Path | None = None,
         data_root: Path | None = None,
         theme_manager: theme.ThemeManager | None = None,
+        ai_service: ai_models.AIService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -58,11 +59,16 @@ class MainWindow(QMainWindow):
         self._db_path = db_path if db_path is not None else state.index_path()
         self._data_root = data_root if data_root is not None else state.data_dir()
         self._theme_manager = theme_manager
+        self._ai = ai_service if ai_service is not None else ai_models.AIService(parent=self)
         self.setWindowTitle("SpaceSage")
         self.resize(1440, 900)
         self.setMinimumSize(980, 620)
         self._build()
         self.apply_theme()
+
+    def ai(self) -> ai_models.AIService:
+        """The AI layer the whole window shares (one config, one answer store)."""
+        return self._ai
 
     # -- construction ----------------------------------------------------- #
 
@@ -75,14 +81,17 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget(central)
         self.import_view = ImportView(self._settings, db_path=self._db_path, parent=self.stack)
-        self.opportunities_view = OpportunitiesView(self.stack)
+        self.opportunities_view = OpportunitiesView(self._ai, self.stack)
         self.plan_page = PlanPage(
             self._data_root,
             db_path=self._db_path,
             settings=self._settings,
+            ai=self._ai,
             parent=self.stack,
         )
-        self.settings_view = SettingsView(self._settings, db_path=self._db_path, parent=self.stack)
+        self.settings_view = SettingsView(
+            self._settings, db_path=self._db_path, ai=self._ai, parent=self.stack
+        )
         for widget in (
             self.import_view,
             self.opportunities_view,
@@ -97,9 +106,13 @@ class MainWindow(QMainWindow):
         self.import_view.busyChanged.connect(self._on_busy_changed)
         self.opportunities_view.statusMessage.connect(self.set_status)
         self.opportunities_view.buildPlanRequested.connect(self.build_plan)
+        self.opportunities_view.aiChanged.connect(self._on_ai_changed)
+        self.opportunities_view.reanalysisRequested.connect(self.reanalyse)
         self.plan_page.goToOpportunities.connect(lambda: self.navigate("opportunities"))
         self.plan_page.statusMessage.connect(self.set_status)
+        self.plan_page.aiChanged.connect(self._on_ai_changed)
         self.settings_view.themeModeChanged.connect(self.themeModeChanged.emit)
+        self.settings_view.aiChanged.connect(self._on_ai_changed)
 
         self._build_status_bar()
         self._shortcuts()
@@ -149,6 +162,9 @@ class MainWindow(QMainWindow):
         bar.setSizeGripEnabled(False)
         self.status_dataset = QLabel("No analysis yet", bar)
         bar.addWidget(self.status_dataset, 1)
+        self.status_ai = widgets.Badge("", "muted", bar)
+        self.status_ai.setObjectName("StatusAi")
+        bar.addPermanentWidget(self.status_ai)
         self.status_message = widgets.ElidedLabel("", bar, mode=Qt.TextElideMode.ElideRight)
         self.status_message.setObjectName("Faint")
         bar.addPermanentWidget(self.status_message)
@@ -156,6 +172,7 @@ class MainWindow(QMainWindow):
         self.status_theme.setObjectName("Faint")
         bar.addPermanentWidget(self.status_theme)
         self.setStatusBar(bar)
+        self._refresh_ai_status()
 
     def _shortcuts(self) -> None:
         for index, (key, _label, _icon) in enumerate(PAGES):
@@ -241,6 +258,34 @@ class MainWindow(QMainWindow):
         """Put a one-line message in the status bar."""
         self.status_message.setText(message)
 
+    # -- AI (design §10) -------------------------------------------------- #
+
+    def reanalyse(self) -> bool:
+        """Rank the index again, now that a rule was written.
+
+        The user pack is re-read by the analysis (rules are data, not code), so
+        the rows the new rule covers stop being undecided on the next pass --
+        which is the whole point of *Apply as rule…*.
+        """
+        if not self._db_path.is_file():
+            self.set_status("There is no index to rank again yet")
+            return False
+        self.import_view.analyze(reuse_index=True)
+        return True
+
+    def _on_ai_changed(self) -> None:
+        """One AI call ended: the badge re-reads the layer, meter included."""
+        self._refresh_ai_status()
+
+    def _refresh_ai_status(self) -> None:
+        """The status bar's AI chip: what the layer is and what it has cost."""
+        status = self._ai.status()
+        meter = self._ai.meter_text()
+        text = ai_models.state_line(status)
+        self.status_ai.setText(f"{text} · {meter}" if meter else text)
+        self.status_ai.set_tone("muted" if not status.ready else "info")
+        self.status_ai.setToolTip(ai_models.state_tooltip(status))
+
     # -- theme ------------------------------------------------------------ #
 
     def apply_theme(self) -> None:
@@ -251,6 +296,7 @@ class MainWindow(QMainWindow):
             self._nav_buttons[key].setIcon(icons.tone_icon(icon_name, tone, 16))
         self.rail_footer.setStyleSheet(f"color: {active.faint};")
         self.status_theme.setText(f"{active.name.capitalize()} theme")
+        self._refresh_ai_status()
         self.opportunities_view.apply_theme()
         self.plan_page.apply_theme()
         self.settings_view.set_mode(self._theme_manager.mode if self._theme_manager else "system")
@@ -259,6 +305,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Wait for a running analysis or run so nothing is killed mid-write."""
+        self.opportunities_view.shutdown()
         self.import_view.shutdown()
         self.plan_page.shutdown()
         super().closeEvent(event)

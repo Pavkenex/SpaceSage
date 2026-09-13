@@ -6,6 +6,12 @@ the widgets); this module is the thin Qt layer that renders it -- one row per
 check-state of the first column, and hand-painted badges and chips so the list
 looks the same in both themes on every platform.
 
+The suggested-solution cell has two possible sources, and says which one it
+painted (design §10): the rule engine's verdict, or -- for a row the rules left
+undecided -- an AI suggestion, badged and chipped as such, because a suggestion
+is advice and a rule is a decision.  The layer below is
+:mod:`spacesage.app.ai_models`; the model only ever *reads* it.
+
 Sorting and filtering live in the engine module; the model only maps them onto
 Qt's ``sort()``/``QModelIndex`` vocabulary.
 """
@@ -33,6 +39,8 @@ from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 
 from spacesage import opportunities, stats
 from spacesage.app import icons, theme
+from spacesage.app.ai_models import SOURCE_AI, SOURCE_RULE, AIStore, AISuggestion
+from spacesage.app.ai_models import tone as ai_tone
 
 COLUMN_SELECT = 0
 COLUMN_PATH = 1
@@ -42,11 +50,17 @@ COLUMN_SOLUTION = 4
 COLUMN_TIER = 5
 COLUMN_CONFIDENCE = 6
 
+ROLE_AI = int(Qt.ItemDataRole.UserRole) + 2
+"""Role of the row's :class:`~spacesage.app.ai_models.AISuggestion` (``None``: none)."""
+
 ROW_HEIGHT = 34
 """One comfortable line per opportunity (the solution cell keeps its why)."""
 
 BADGE_PADDING = 12
 """Horizontal padding inside a badge pill (6px each side, on the 4px grid)."""
+
+AI_CHIP_MAX_WIDTH = 132
+"""Widest the provenance chip gets before it falls back to plain ``AI``."""
 
 
 @dataclass(frozen=True)
@@ -82,6 +96,73 @@ def solution_tone(row: opportunities.Opportunity) -> str:
         "NATIVE": "info",
         "REVIEW": "warning",
     }.get(row.action, "muted")
+
+
+@dataclass(frozen=True)
+class SolutionDisplay:
+    """What the suggested-solution cell shows for one row, and where it came from.
+
+    One object for both sources: the delegate paints it, the model's
+    ``DisplayRole`` returns its label (what a screen reader or a copy sees) and
+    the tests assert on it, so "what is painted" and "what is reported" cannot
+    drift apart.
+    """
+
+    label: str
+    tone: str
+    why: str
+    source: str
+    """``rule`` or ``ai`` -- the provenance the cell chips."""
+    icon: str
+    """Icon name of the action being suggested."""
+    provenance: str = ""
+    """``AI · provider / model`` for an AI answer, ``""`` for a rule verdict."""
+    entry: AISuggestion | None = None
+    """The stored answer behind an AI cell (``None`` for a rule cell)."""
+
+    @property
+    def from_ai(self) -> bool:
+        """True when the AI, not the rule engine, produced this cell."""
+        return self.source == SOURCE_AI
+
+
+def solution_display(
+    row: opportunities.Opportunity, entry: AISuggestion | None = None
+) -> SolutionDisplay:
+    """The suggested solution for a row: the rules' verdict, or the AI's advice.
+
+    The AI only ever fills a cell the rules left undecided (design §10): a plan
+    executes rule verdicts, so painting an AI answer over one would misdescribe
+    what *Build plan* would do with the row.
+    """
+    if entry is not None and row.state == opportunities.STATE_UNDECIDED:
+        return SolutionDisplay(
+            label=entry.label,
+            tone=ai_tone(entry),
+            why=reason_without_label(entry.label, entry.why),
+            source=SOURCE_AI,
+            icon=_action_icon(entry.action),
+            provenance=entry.provenance,
+            entry=entry,
+        )
+    return SolutionDisplay(
+        label=row.solution,
+        tone=solution_tone(row),
+        why=why_without_label(row),
+        source=SOURCE_RULE,
+        icon=_action_icon(row.action),
+    )
+
+
+def _action_icon(action: str) -> str:
+    """Icon name of one action, from the one map that knows both vocabularies."""
+    return icons.action_icon_name(action)
+
+
+def reason_without_label(label: str, why: str) -> str:
+    """The reason alone: a why line minus the label the badge already shows."""
+    prefix = f"{label}: "
+    return why[len(prefix) :] if why.startswith(prefix) else why
 
 
 def fitted_width(sample: str, *, mono: bool = True, padding: int | None = None) -> int:
@@ -131,6 +212,7 @@ class OpportunityTableModel(QAbstractTableModel):
         self._descending = True
         self._selection = opportunities.Selection(())
         self._index_of_key: dict[str, int] = {}
+        self._ai: AIStore | None = None
 
     # -- data ------------------------------------------------------------- #
 
@@ -168,6 +250,48 @@ class OpportunityTableModel(QAbstractTableModel):
             self._filtered, self._sort_key, descending=self._descending
         )
         self._index_of_key = {row.key: index for index, row in enumerate(self._rows)}
+
+    # -- the AI overlay ---------------------------------------------------- #
+
+    def set_ai_store(self, store: AIStore | None) -> None:
+        """Read suggestions from ``store`` (``None`` detaches; rows fall back to rules).
+
+        The store is display state that arrives asynchronously: every batch of a
+        fill changes a handful of keys, and the model repaints exactly those rows.
+        """
+        if self._ai is not None:
+            self._ai.changed.disconnect(self._on_ai_changed)
+        self._ai = store
+        if store is not None:
+            store.changed.connect(self._on_ai_changed)
+        self._on_ai_changed(())
+
+    def ai_store(self) -> AIStore | None:
+        """The store this model reads suggestions from."""
+        return self._ai
+
+    def ai_entry(self, row: opportunities.Opportunity) -> AISuggestion | None:
+        """The AI answer stored for a row, if any."""
+        return self._ai.verdict(row.key) if self._ai is not None else None
+
+    def display_for(self, row: opportunities.Opportunity) -> SolutionDisplay:
+        """What the row's suggested-solution cell shows, and where it came from."""
+        return solution_display(row, self.ai_entry(row))
+
+    def _on_ai_changed(self, keys: object) -> None:
+        """Repaint the rows whose suggestion changed (an empty tuple: all of them)."""
+        touched = tuple(keys) if isinstance(keys, (tuple, list, set)) else ()
+        if not touched:
+            if self._rows:
+                self.dataChanged.emit(
+                    self.index(0, 0), self.index(len(self._rows) - 1, len(COLUMNS) - 1)
+                )
+            return
+        for key in touched:
+            index = self._index_of_key.get(key)
+            if index is None:
+                continue
+            self.dataChanged.emit(self.index(index, 0), self.index(index, len(COLUMNS) - 1))
 
     # -- queries ---------------------------------------------------------- #
 
@@ -288,6 +412,8 @@ class OpportunityTableModel(QAbstractTableModel):
             return row
         if role == Qt.ItemDataRole.UserRole + 1:
             return selection.state(row.key)
+        if role == ROLE_AI:
+            return self.ai_entry(row)
         if role == Qt.ItemDataRole.DisplayRole:
             return self._display(row, column.key)
         if role == Qt.ItemDataRole.ToolTipRole:
@@ -316,7 +442,7 @@ class OpportunityTableModel(QAbstractTableModel):
         if key == "gain":
             return row.gain_label
         if key == "solution":
-            return row.solution
+            return self.display_for(row).label
         if key == "tier":
             return row.tier
         if key == "confidence":
@@ -328,6 +454,7 @@ class OpportunityTableModel(QAbstractTableModel):
         if row.kind_label:
             lines.append(f"Kind: {row.kind_label}")
         lines.append(f"State: {row.state_label} · Tier {row.tier} · Gain: {row.gain_basis}")
+        lines.extend(self._ai_tooltip(row))
         if row.members:
             shown = ", ".join(row.members[:3])
             extra = (
@@ -335,6 +462,23 @@ class OpportunityTableModel(QAbstractTableModel):
             )
             lines.append(f"Covers: {shown}{extra}")
         return "\n".join(lines)
+
+    def _ai_tooltip(self, row: opportunities.Opportunity) -> list[str]:
+        """The provenance lines an AI-suggested row carries in its tooltip."""
+        entry = self.ai_entry(row)
+        if entry is None or row.state != opportunities.STATE_UNDECIDED:
+            return []
+        cached = ", from the cache" if entry.cached else ""
+        lines = [
+            "",
+            f"AI suggestion · {entry.provenance}{cached} · not executable",
+            entry.why,
+        ]
+        lines.extend(entry.detail_lines())
+        lines.append(
+            "Apply it as a rule (row menu → Apply as rule…) to make the engine decide this."
+        )
+        return lines
 
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
         """Qt's sort hook (fed by header clicks)."""
@@ -510,7 +654,13 @@ class CheckDelegate(QStyledItemDelegate):
 
 
 class SolutionDelegate(QStyledItemDelegate):
-    """The solution column: action icon, badge and the one-line why."""
+    """The solution column: action icon, badge, provenance chip and the one-line why.
+
+    Two kinds of cell live here (design §10): the rule engine's verdict, and --
+    for a row the rules left undecided -- the AI's suggestion, which carries an
+    extra chip naming who wrote it.  The chip is the whole difference on screen:
+    an AI answer must never look like a decision the plan would execute.
+    """
 
     MIN_WHY = 80
     """Narrowest stretch of the why line worth painting next to the badge."""
@@ -525,6 +675,8 @@ class SolutionDelegate(QStyledItemDelegate):
         if not isinstance(row, opportunities.Opportunity):
             super().paint(painter, option, index)
             return
+        entry = index.data(ROLE_AI)
+        display = solution_display(row, entry if isinstance(entry, AISuggestion) else None)
         tokens = theme.tokens()
         selection = index.data(Qt.ItemDataRole.UserRole + 1)
         painter.save()
@@ -532,11 +684,15 @@ class SolutionDelegate(QStyledItemDelegate):
         rect = option.rect.adjusted(theme.SPACE["sm"], 0, -theme.SPACE["sm"], 0)
 
         icon_size = 14
-        glyph = icons.action_icon(row.action, icon_size).pixmap(icon_size, icon_size)
+        glyph = (
+            icons.tone_icon(display.icon, display.tone, icon_size)
+            if display.from_ai
+            else icons.action_icon(row.action, icon_size)
+        ).pixmap(icon_size, icon_size)
         painter.drawPixmap(rect.x(), rect.center().y() - icon_size // 2 - 1, glyph)
         x = rect.x() + icon_size + theme.SPACE["sm"]
 
-        label = row.solution
+        label = display.label
         font = theme.ui_font("xs", weight=QFont.Weight.Bold)
         metrics = QFontMetrics(font)
         # The badge gets the room it needs first; it is elided only when the
@@ -550,10 +706,12 @@ class SolutionDelegate(QStyledItemDelegate):
             badge_label = metrics.elidedText(
                 label, Qt.TextElideMode.ElideRight, max(space - BADGE_PADDING, 0)
             )
-        tone = solution_tone(row)
         badge = QRect(x, rect.center().y() - 9, badge_width, 18)
-        _paint_badge(painter, badge, badge_label, tone, font=font)
+        _paint_badge(painter, badge, badge_label, display.tone, font=font)
         x = badge.right() + theme.SPACE["sm"]
+
+        if display.from_ai:
+            x += self._paint_chip(painter, x, rect, display)
 
         # The badge already names the action, so the line beside it carries only
         # the reason -- and is dropped, never squeezed, when the room is gone.
@@ -567,15 +725,42 @@ class SolutionDelegate(QStyledItemDelegate):
         painter.drawText(
             remaining,
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-            elide_words(why_without_label(row), remaining.width(), painter.fontMetrics()),
+            elide_words(display.why, remaining.width(), painter.fontMetrics()),
         )
         painter.restore()
+
+    def _paint_chip(
+        self,
+        painter: QPainter,
+        x: int,
+        rect: QRect,
+        display: SolutionDisplay,
+    ) -> int:
+        """Paint the ``AI · model`` provenance chip; the width it used, else 0.
+
+        The full provenance is ``AI · provider / model``: the chip shows as much
+        of it as fits (never wider than :data:`AI_CHIP_MAX_WIDTH`, so a long model
+        name cannot push the reason out of the cell) and falls back to plain
+        ``AI`` -- the tooltip and the details pane always carry the whole string.
+        """
+        font = theme.ui_font("xs")
+        metrics = QFontMetrics(font)
+        for text in (display.provenance, "AI"):
+            width = metrics.horizontalAdvance(text) + BADGE_PADDING
+            if width > AI_CHIP_MAX_WIDTH or width == 0:
+                continue
+            if x + width + self.MIN_WHY > rect.right():
+                break
+            painter.setFont(font)
+            chip = QRect(x, rect.center().y() - 8, width, 16)
+            _paint_badge(painter, chip, text, "info", font=font)
+            return width + theme.SPACE["xs"]
+        return 0
 
 
 def why_without_label(row: opportunities.Opportunity) -> str:
     """The reason alone: the row's why line minus the label its badge already shows."""
-    label = f"{row.solution}: "
-    return row.why[len(label) :] if row.why.startswith(label) else row.why
+    return reason_without_label(row.solution, row.why)
 
 
 class TierDelegate(QStyledItemDelegate):

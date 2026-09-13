@@ -19,8 +19,10 @@ import pytest
 from PySide6.QtGui import QPixmap
 
 from fixtures import gen_live
+from spacesage import ai as ai_layer
 from spacesage import db, ingest, opportunities, planner, rules
-from spacesage.app import state, theme
+from spacesage.ai import config as ai_config
+from spacesage.app import ai_models, state, theme
 from spacesage.app.main import create_window
 from spacesage.app.windows import MainWindow
 
@@ -78,9 +80,53 @@ def settings() -> state.Settings:
 def window(
     qtbot: object, qapp: object, settings: state.Settings, fixture_index: Path, tmp_path: Path
 ) -> Iterator[MainWindow]:
-    """A shown main window over the fixture index."""
+    """A shown main window over the fixture index, with the AI layer off.
+
+    The window owns the AI layer, so every test that builds one gets an offline
+    one: no test can reach a provider (or another test's cache) by accident.
+    """
     manager = theme.ThemeManager(qapp, mode=theme.MODE_LIGHT)
-    built = create_window(qapp, settings, db_path=fixture_index, theme_manager=manager)
+    built = create_window(
+        qapp,
+        settings,
+        db_path=fixture_index,
+        theme_manager=manager,
+        ai_service=offline_ai(tmp_path),
+    )
+    built.resize(1440, 900)
+    built.show()
+    _settle(qtbot)
+    try:
+        yield built
+    finally:
+        built.close()
+        built.deleteLater()
+
+
+def offline_ai(tmp_path: Path) -> ai_models.AIService:
+    """An AI layer with no provider: "AI off", an empty cache, nothing on disk."""
+    return ai_models.AIService(config=ai_layer.AIConfig(cache_dir=str(tmp_path / "ai-cache")))
+
+
+@pytest.fixture
+def ai_service(ai_config: ai_layer.AIConfig) -> ai_models.AIService:
+    """The app's AI seam over the scripted stub provider (design §10)."""
+    return ai_models.AIService(config=ai_config)
+
+
+@pytest.fixture
+def ai_window(
+    qtbot: object,
+    qapp: object,
+    settings: state.Settings,
+    fixture_index: Path,
+    ai_service: ai_models.AIService,
+) -> Iterator[MainWindow]:
+    """The main window with a working (scripted) provider behind the AI layer."""
+    manager = theme.ThemeManager(qapp, mode=theme.MODE_LIGHT)
+    built = create_window(
+        qapp, settings, db_path=fixture_index, theme_manager=manager, ai_service=ai_service
+    )
     built.resize(1440, 900)
     built.show()
     _settle(qtbot)
@@ -106,6 +152,23 @@ def settle() -> Callable[[object, int], None]:
 def artifacts() -> Path:
     """Where screenshot tests write their PNGs."""
     return ARTIFACT_DIR
+
+
+@pytest.fixture(autouse=True)
+def ai_off_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """No GUI test may read the developer's AI config, cache or rule packs.
+
+    Views constructed directly (``PlanView`` and friends) build their own
+    :class:`spacesage.app.ai_models.AIService` when a test does not hand one in;
+    pointing the environment at an empty config keeps every one of them "AI off"
+    instead of picking up whatever is on the machine running the suite.
+    """
+    home = tmp_path_factory.mktemp("ai-off")
+    monkeypatch.setenv(ai_config.CONFIG_ENV_VAR, str(home / "ai.toml"))
+    monkeypatch.setenv(ai_config.CACHE_DIR_ENV_VAR, str(home / "ai-cache"))
+    monkeypatch.setenv(rules.RULES_ENV_VAR, str(home / "rules"))
 
 
 @pytest.fixture(autouse=True)
@@ -240,12 +303,14 @@ def live_sandbox(tmp_path: Path) -> Iterator[LiveSandbox]:
 
 
 @pytest.fixture
-def sandbox_window(
-    qtbot: object, qapp: object, tmp_path: Path
-) -> Callable[[LiveSandbox], MainWindow]:
-    """A shown main window over a live sandbox (target drive configured)."""
+def sandbox_window(qtbot: object, qapp: object, tmp_path: Path) -> Callable[..., MainWindow]:
+    """A shown main window over a live sandbox (target drive configured).
 
-    def build(sandbox: LiveSandbox) -> MainWindow:
+    Pass ``ai=`` to put a working (scripted) provider behind the window's AI
+    layer; without it the window gets the offline service the fixture builds.
+    """
+
+    def build(sandbox: LiveSandbox, ai: ai_models.AIService | None = None) -> MainWindow:
         settings = state.Settings.persisted(tmp_path / "settings.ini")
         settings.set_target_drive(str(sandbox.target))
         settings.set_reserve_bytes(0)
@@ -257,6 +322,7 @@ def sandbox_window(
             db_path=sandbox.db_path,
             data_root=sandbox.data_root,
             theme_manager=manager,
+            ai_service=ai,
         )
         qtbot.addWidget(window)  # type: ignore[attr-defined]
         window.resize(1440, 900)

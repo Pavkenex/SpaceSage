@@ -10,7 +10,7 @@ Icons in this subset: `alert-triangle`, `arrow-right-left`, `check`,
 `chevron-down`, `chevron-up`, `clipboard-list`, `eye`, `file`, `filter`,
 `folder`, `folder-open`, `hard-drive`, `help-circle`, `info`, `link-2`,
 `list-ordered`, `minimize-2`, `monitor`, `moon`, `refresh-cw`, `search`,
-`settings`, `shield-check`, `sun`, `terminal`, `trash-2`, `x`.
+`settings`, `shield-check`, `sparkles`, `sun`, `terminal`, `trash-2`, `x`.
 
 ```
 ISC License

@@ -6,17 +6,26 @@ destination editor feeding the planner's arithmetic, and the members a grouped
 row covers.  The pane never decides anything itself: wording, gains and link
 policy all come from :mod:`spacesage.opportunities` and
 :mod:`spacesage.planner`.
+
+The AI card (design §10) is the pane's one live surface: what the AI answered
+for this row, who answered it, and what a user can do with that advice -- ask
+for a suggestion or a classification, ask for an explanation (which streams in
+here while the provider writes it), or promote the answer to a rule.  The pane
+renders; the screen beside it owns the calls.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from collections.abc import Callable
+
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QLayout,
     QLineEdit,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QVBoxLayout,
@@ -24,9 +33,16 @@ from PySide6.QtWidgets import (
 )
 
 from spacesage import candidates, opportunities, stats
-from spacesage.app import icons, theme, widgets
+from spacesage.app import ai_models as ai_models_module
+from spacesage.app import icons, models, theme, widgets
+from spacesage.app.ai_models import AIStore, AISuggestion, Notice
 
 _MISSING = "—"
+
+AI_SUGGEST = "suggest"
+AI_CLASSIFY = "classify"
+AI_EXPLAIN = "explain"
+"""The three things the pane can ask the AI for (the worker's use cases)."""
 
 
 class DetailsPane(QScrollArea):
@@ -34,6 +50,12 @@ class DetailsPane(QScrollArea):
 
     destinationEdited = Signal(str, str)
     """``(row key, destination text)`` -- empty text means "no override"."""
+
+    aiRequested = Signal(str, str)
+    """``(use case, row key)`` -- *Suggest* / *Classify* / *Explain with AI* was pressed."""
+
+    promoteRequested = Signal(str)
+    """The key of the row whose AI answer should become a rule (*Apply as rule…*)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -43,6 +65,16 @@ class DetailsPane(QScrollArea):
         self._target_drive = ""
         self._row: opportunities.Opportunity | None = None
         self._override = ""
+        self._ai_store: AIStore | None = None
+        self._ai_busy = False
+        self._ai_stage = ""
+        self._ai_error = ""
+        self._explanation = ""
+        self._explanation_stage = ""
+        self._explanation_error = ""
+        self._ai_card: QWidget | None = None
+        self._explanation_card: QWidget | None = None
+        self._explanation_label: QLabel | None = None
 
         self._body = QWidget(self)
         self._layout = QVBoxLayout(self._body)
@@ -62,6 +94,103 @@ class DetailsPane(QScrollArea):
     def current_row(self) -> opportunities.Opportunity | None:
         """The row currently explained (``None`` in the empty state)."""
         return self._row
+
+    def set_ai_store(self, store: AIStore | None) -> None:
+        """Read this row's AI answers from ``store`` (repainting as they arrive)."""
+        if self._ai_store is not None:
+            self._ai_store.changed.disconnect(self._on_ai_changed)
+        self._ai_store = store
+        if store is not None:
+            store.changed.connect(self._on_ai_changed)
+
+    def ai_entry(self) -> AISuggestion | None:
+        """The AI answer for the row on screen, if any (the newest kind wins).
+
+        A row can carry both a suggestion and a classification; the card shows one
+        at a time -- the column's verdict or the label a rule could be written
+        from -- and names which one it is showing.
+        """
+        if self._row is None or self._ai_store is None:
+            return None
+        return self._ai_store.suggestion(self._row.key) or self._ai_store.classification(
+            self._row.key
+        )
+
+    def ai_card(self) -> QWidget | None:
+        """The AI card currently on screen (``None`` in the empty state)."""
+        return self._ai_card
+
+    def explanation_card(self) -> QWidget | None:
+        """The explanation card currently on screen (``None`` in the empty state)."""
+        return self._explanation_card
+
+    def set_ai_busy(self, busy: bool, stage: str = "") -> None:
+        """Show (or hide) the "asking the provider" state of the AI card."""
+        self._ai_busy = busy
+        self._ai_stage = stage if busy else ""
+        if busy:
+            # The user just asked about this row: reveal before the card is
+            # rebuilt, because the card in the slot is the one with a geometry.
+            self._reveal(self._ai_card)
+        self._refresh_ai_card()
+
+    def set_ai_error(self, message: str) -> None:
+        """Show an inline error in the AI card (unreachable provider, missing key)."""
+        self._ai_error = message
+        self._ai_busy = False
+        self._reveal(self._ai_card)
+        self._refresh_ai_card()
+
+    def clear_ai_error(self) -> None:
+        """Drop the inline error (a new request is on its way)."""
+        self._ai_error = ""
+        self._refresh_ai_card()
+
+    def begin_explanation(self, stage: str = "") -> None:
+        """Open the explanation card for a run that is about to stream."""
+        self._explanation = ""
+        self._explanation_error = ""
+        self._explanation_stage = stage or "Explaining…"
+        self._reveal(self._explanation_card or self._ai_card)
+        self._rebuild_explanation_card()
+
+    def extend_explanation(self, delta: str) -> None:
+        """Append streamed prose (the provider writes it a chunk at a time)."""
+        self._explanation += delta
+        if self._explanation_label is None:
+            self._rebuild_explanation_card()
+            return
+        if self._explanation_label.objectName() != "Muted":
+            # The label was carrying the empty state's faint hint; streamed prose
+            # is the answer itself, so it takes the body tone from the first chunk.
+            self._explanation_label.setObjectName("Muted")
+            self._explanation_label.style().unpolish(self._explanation_label)
+            self._explanation_label.style().polish(self._explanation_label)
+        self._explanation_label.setText(self._explanation)
+
+    def finish_explanation(self, text: str, *, stage: str = "") -> None:
+        """Close the stream with the parsed explanation."""
+        self._explanation = text
+        self._explanation_stage = stage
+        self._rebuild_explanation_card()
+
+    def set_explanation_error(self, message: str) -> None:
+        """Report a failed explanation inline, in the card that asked for it."""
+        self._explanation_error = message
+        self._explanation_stage = ""
+        self._rebuild_explanation_card()
+
+    def explanation_text(self) -> str:
+        """The explanation currently on screen (streamed or finished)."""
+        return self._explanation
+
+    def explanation_stage(self) -> str:
+        """The provenance line of the explanation card (``""`` before one arrives)."""
+        return self._explanation_stage
+
+    def explanation_failed(self) -> bool:
+        """Did the last explanation attempt fail (the card shows the reason inline)?"""
+        return bool(self._explanation_error)
 
     def destination_text(self) -> str:
         """The destination editor's current text (``""`` when there is none)."""
@@ -111,6 +240,8 @@ class DetailsPane(QScrollArea):
         self._build_header(row, checked=checked)
         self._build_metrics(row)
         self._build_solution(row)
+        self._build_ai(row)
+        self._build_explanation(row)
         self._build_side_effects(row)
         self._build_destination(row)
         self._build_alternatives(row)
@@ -128,6 +259,9 @@ class DetailsPane(QScrollArea):
     # -- building blocks -------------------------------------------------- #
 
     def _reset(self) -> None:
+        self._ai_card = None
+        self._explanation_card = None
+        self._explanation_label = None
         while self._layout.count():
             item = self._layout.takeAt(0)
             if item is None:
@@ -184,12 +318,13 @@ class DetailsPane(QScrollArea):
         )
         layout.setSpacing(theme.SPACE["sm"])
 
-        path = widgets.mono_label(row.path, box)
+        path = widgets.ElidedLabel(row.path, box, mode=Qt.TextElideMode.ElideMiddle)
+        path.setObjectName("Mono")
         path.setStyleSheet(f"font-weight: 700; color: {theme.tokens().text};")
+        path.setToolTip(row.path)
         layout.addWidget(path)
 
-        chips = QHBoxLayout()
-        chips.setSpacing(theme.SPACE["xs"])
+        chips = widgets.FlowLayout(h_spacing=theme.SPACE["xs"])
         state = widgets.Badge(row.state_label, widgets.state_tone(row.state), box)
         chips.addWidget(state)
         tier = widgets.Badge(row.tier, widgets.tier_tone(row.tier), box)
@@ -200,15 +335,13 @@ class DetailsPane(QScrollArea):
             chips.addWidget(widgets.Badge(row.kind_label, "info", box))
         if checked:
             chips.addWidget(widgets.Badge("Selected", "success", box))
-        chips.addStretch(1)
         layout.addLayout(chips)
         self._layout.addWidget(box)
 
     def _build_metrics(self, row: opportunities.Opportunity) -> None:
         strip = QWidget(self._body)
-        layout = QHBoxLayout(strip)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(theme.SPACE["sm"])
+        layout = widgets.FlowLayout(h_spacing=theme.SPACE["sm"], v_spacing=theme.SPACE["sm"])
+        strip.setLayout(layout)
         age = f"{row.age_days} days" if row.age_days is not None else "unknown"
         cards = (
             ("Size", stats.format_bytes(row.size), "folder" if row.is_dir else "file"),
@@ -220,7 +353,13 @@ class DetailsPane(QScrollArea):
         self._layout.addWidget(strip)
 
     def _build_solution(self, row: opportunities.Opportunity) -> None:
-        self._section("Suggested solution", row.why, icon_name="list-ordered")
+        display = models.solution_display(row, self.ai_entry())
+        source = (
+            f"Source: {display.provenance} — advice, not executable"
+            if display.from_ai
+            else "Source: rule engine" + (f" · pack {row.pack}" if row.pack else "")
+        )
+        self._section("Suggested solution", f"{source}\n{display.why}", icon_name="list-ordered")
         detail = row.rationale
         if row.rule_id:
             detail += f"\nRule: {row.rule_id}"
@@ -233,6 +372,262 @@ class DetailsPane(QScrollArea):
         if note:
             detail += f"\n{note}"
         self._section("Reasoning", detail, icon_name="info")
+
+    # -- the AI card ------------------------------------------------------ #
+
+    def _build_ai(self, row: opportunities.Opportunity) -> QWidget:
+        """The AI's answer for this row, and the three things to do with it.
+
+        It is a card, not a control panel: the verdict and its provenance read
+        first, the buttons last, and every failure the call can hit is a line in
+        here rather than a modal box (design §10).
+        """
+        entry = self.ai_entry()
+        frame = QFrame(self._body)
+        frame.setObjectName("Card")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(
+            theme.SPACE["md"], theme.SPACE["sm"], theme.SPACE["md"], theme.SPACE["md"]
+        )
+        layout.setSpacing(theme.SPACE["xs"])
+
+        head = QHBoxLayout()
+        head.setSpacing(theme.SPACE["sm"])
+        glyph = QLabel(frame)
+        glyph.setPixmap(icons.tone_icon("sparkles", "info", 14).pixmap(14, 14))
+        head.addWidget(glyph)
+        head.addWidget(
+            widgets.section_label(
+                "AI classification"
+                if entry is not None and entry.is_classification
+                else "AI suggestion",
+                frame,
+            )
+        )
+        head.addStretch(1)
+        layout.addLayout(head)
+
+        if self._ai_error:
+            layout.addWidget(
+                widgets.WarningBanner(Notice.failure(self._ai_error, paths=(row.path,)), frame)
+            )
+        elif self._ai_busy:
+            stage = QLabel(self._ai_stage or "Asking the provider…", frame)
+            stage.setObjectName("Faint")
+            stage.setWordWrap(True)
+            layout.addWidget(stage)
+
+        if entry is None:
+            empty = QLabel(
+                "No AI answer for this row yet. Ask for one below, or fill the whole list "
+                "from the opportunities toolbar.",
+                frame,
+            )
+            empty.setObjectName("Muted")
+            empty.setWordWrap(True)
+            layout.addWidget(empty)
+        else:
+            layout.addLayout(self._ai_verdict_row(entry, frame))
+            why = QLabel(entry.why, frame)
+            why.setWordWrap(True)
+            why.setObjectName("Muted")
+            why.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(why)
+            for line in entry.detail_lines():
+                detail = QLabel(line, frame)
+                detail.setObjectName("Muted")
+                detail.setWordWrap(True)
+                layout.addWidget(detail)
+            note = QLabel(
+                "Advice only: it becomes a decision when you apply it as a rule. Nothing the "
+                "AI writes can execute on its own.",
+                frame,
+            )
+            note.setObjectName("Faint")
+            note.setWordWrap(True)
+            layout.addWidget(note)
+
+        layout.addLayout(self._ai_buttons(entry, frame))
+        self._ai_card = frame
+        self._layout.addWidget(frame)
+        return frame
+
+    def _ai_verdict_row(self, entry: AISuggestion, parent: QWidget) -> QLayout:
+        """The badges of one AI answer: what it says, who said it, how sure."""
+        row = widgets.FlowLayout(h_spacing=theme.SPACE["xs"])
+        row.addWidget(widgets.Badge(entry.label, ai_models_module.tone(entry), parent))
+        row.addWidget(widgets.Badge(entry.provenance, "muted", parent))
+        row.addWidget(widgets.Chip(entry.confidence, parent))
+        if entry.cached:
+            row.addWidget(widgets.Badge("cached", "muted", parent))
+        if entry.is_classification and entry.category:
+            label = f"{entry.category} · {entry.tier}" if entry.tier else entry.category
+            row.addWidget(widgets.Badge(label, "info", parent))
+        return row
+
+    def _ai_buttons(self, entry: AISuggestion | None, parent: QWidget) -> QLayout:
+        """*Suggest* / *Classify* / *Explain* / *Apply as rule…*, in that order."""
+        row = widgets.FlowLayout(h_spacing=theme.SPACE["xs"])
+        for key, label, use_case, tip in (
+            (
+                "AiSuggest",
+                "Suggest with AI",
+                AI_SUGGEST,
+                "Ask the provider for a suggested solution for this row",
+            ),
+            (
+                "AiClassify",
+                "Classify with AI",
+                AI_CLASSIFY,
+                "Ask the provider for a category, a tier and an action for this row",
+            ),
+            (
+                "AiExplain",
+                "Explain with AI",
+                AI_EXPLAIN,
+                "Ask for a deep explanation of this selection, streamed here as it is written",
+            ),
+        ):
+            button = QPushButton(label, parent)
+            button.setObjectName(key)
+            button.setToolTip(tip)
+            button.setEnabled(not self._ai_busy)
+            button.clicked.connect(lambda _checked=False, use=use_case: self._ask(use))
+            row.addWidget(button)
+        apply_button = QPushButton("Apply as rule…", parent)
+        apply_button.setObjectName("AiPromote")
+        apply_button.setToolTip(
+            "Write this answer into your user rule pack, after showing you the exact rule"
+        )
+        apply_button.setEnabled(entry is not None)
+        apply_button.clicked.connect(
+            lambda _checked=False: self.promoteRequested.emit(self._row.key if self._row else "")
+        )
+        row.addWidget(apply_button)
+        return row
+
+    def _ask(self, use_case: str) -> None:
+        """Ask the screen for one AI call about the row on screen."""
+        if self._row is None:
+            return
+        self.clear_ai_error()
+        self.aiRequested.emit(use_case, self._row.key)
+
+    # -- the explanation card --------------------------------------------- #
+
+    def _build_explanation(self, row: opportunities.Opportunity) -> QWidget:
+        """The streamed explanation: an honest empty state until one is asked for."""
+        frame = QFrame(self._body)
+        frame.setObjectName("Card")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(
+            theme.SPACE["md"], theme.SPACE["sm"], theme.SPACE["md"], theme.SPACE["md"]
+        )
+        layout.setSpacing(theme.SPACE["xs"])
+
+        head = QHBoxLayout()
+        head.setSpacing(theme.SPACE["sm"])
+        glyph = QLabel(frame)
+        glyph.setPixmap(icons.tone_icon("sparkles", "info", 14).pixmap(14, 14))
+        head.addWidget(glyph)
+        head.addWidget(widgets.section_label("Explanation", frame))
+        head.addStretch(1)
+        layout.addLayout(head)
+
+        if self._explanation_stage:
+            stage = QLabel(self._explanation_stage, frame)
+            stage.setObjectName("Faint")
+            stage.setWordWrap(True)
+            layout.addWidget(stage)
+        if self._explanation_error:
+            layout.addWidget(
+                widgets.WarningBanner(
+                    Notice.failure(self._explanation_error, paths=(row.path,)), frame
+                )
+            )
+        empty = not self._explanation and not self._explanation_stage
+        text = QLabel(
+            "Nothing yet: Explain with AI asks the provider what this row is, what it "
+            "risks and what the alternatives are, and writes the answer here."
+            if empty
+            else self._explanation,
+            frame,
+        )
+        text.setObjectName("Muted" if not empty else "Faint")
+        text.setWordWrap(True)
+        text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(text)
+        self._explanation_label = text
+        self._explanation_card = frame
+        self._layout.addWidget(frame)
+        return frame
+
+    # -- live updates ----------------------------------------------------- #
+
+    def _on_ai_changed(self, keys: object) -> None:
+        """Repaint the AI card when the row on screen got (or lost) an answer."""
+        if self._row is None or self._ai_card is None:
+            return
+        touched = tuple(keys) if isinstance(keys, (tuple, list, set)) else ()
+        if touched and self._row.key not in touched:
+            return
+        # Reveal before the swap: the card in the slot right now is the one whose
+        # geometry is valid (see _reveal), and the slot is where the new one lands.
+        if self.ai_entry() is not None:
+            self._reveal(self._ai_card)
+        self._refresh_ai_card()
+
+    def _reveal(self, widget: QWidget | None) -> None:
+        """Scroll the pane so this card's slot is on screen.
+
+        The pane is a scroll area and the AI cards sit below the reasoning, so an
+        answer is usually below the fold when it arrives.  The offset comes from
+        the widget currently in that slot: a freshly rebuilt card has no geometry
+        of its own until the next layout pass, but the slot does not move when it
+        is swapped, so what is measured here is still where it will be.
+        """
+        if widget is None:
+            return
+        top = widget.mapTo(self._body, QPoint(0, 0)).y()
+        self.verticalScrollBar().setValue(max(0, top - theme.SPACE["md"]))
+
+    def _refresh_ai_card(self) -> None:
+        """Swap the AI card for a freshly built one (in place: nothing else moves)."""
+        if self._row is None or self._ai_card is None:
+            return
+        self._ai_card = self._swap(self._ai_card, lambda: self._build_ai(self._row))  # type: ignore[arg-type]
+
+    def _rebuild_explanation_card(self) -> None:
+        """Show, update or extend the explanation card (streaming writes here)."""
+        if self._row is None:
+            return
+        if self._explanation_card is None:
+            self._insert_after(self._ai_card, self._build_explanation(self._row))
+            return
+        self._explanation_card = self._swap(
+            self._explanation_card,
+            lambda: self._build_explanation(self._row),  # type: ignore[arg-type]
+        )
+
+    def _swap(self, old: QWidget, build: Callable[[], QWidget]) -> QWidget:
+        """Replace ``old`` with a freshly built card, keeping its position."""
+        index = self._layout.indexOf(old)
+        fresh = build()
+        old.setParent(None)
+        old.deleteLater()
+        if index < 0:
+            self._layout.addWidget(fresh)
+            return fresh
+        self._layout.insertWidget(index, fresh)
+        return fresh
+
+    def _insert_after(self, anchor: QWidget | None, card: QWidget) -> None:
+        """Put ``card`` right after ``anchor`` (the AI card), or at the very end."""
+        index = self._layout.indexOf(anchor) if anchor is not None else -1
+        if index < 0:
+            self._layout.addWidget(card)
+        else:
+            self._layout.insertWidget(index + 1, card)
 
     def _build_side_effects(self, row: opportunities.Opportunity) -> None:
         text = opportunities.side_effects(row, target=self._target_drive or None)
@@ -376,11 +771,5 @@ def _looks_absolute(path: str) -> bool:
 
 
 def _alternative_icon(action: str) -> str:
-    """The icon of one alternative (mirrors the list's suggested-solution icons)."""
-    return {
-        "DELETE_QUARANTINE": "trash-2",
-        "MOVE": "arrow-right-left",
-        "COMPRESS_NTFS": "minimize-2",
-        "NATIVE": "terminal",
-        "REVIEW": "help-circle",
-    }.get(action, "info")
+    """The icon of one alternative (the one map that knows both vocabularies)."""
+    return icons.action_icon_name(action)

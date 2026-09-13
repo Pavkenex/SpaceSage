@@ -18,16 +18,36 @@ reports per-item results:
     reverse a journal (all of it, or the selection) with verification;
 ``HistoryWorker``
     read the app's journals back into per-item undo status.
+
+The AI layer adds four more, and their signals say what makes them different --
+network calls that answer slowly and can be cancelled mid-run:
+
+``SuggestWorker``
+    fill suggestions (or classifications) for a list, batch by batch, reporting
+    every batch's answers as they land so the list fills in row by row;
+``ExplainWorker``
+    write one selection's deep explanation, streaming the prose as it arrives;
+``ReviewWorker``
+    annotate a drafted plan with severity-tagged risks;
+``ConnectionWorker``
+    the Settings screen's "Test connection": ``/models`` plus a latency probe.
+
+None of them can produce an executable action: they fill display state, and the
+only way any of it reaches a plan is a rule promotion (design §10).
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import threading
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from spacesage import db, ingest, opportunities, planning, rules
+from spacesage.ai import Classification, ItemFacts, Suggestion
+from spacesage.app.ai_models import AIService, AISuggestion
 
 
 class AnalysisWorker(QObject):
@@ -333,7 +353,255 @@ class HistoryWorker(QObject):
         self.finished.emit(tuple(found))
 
 
-Worker = AnalysisWorker | PlanWorker | PreviewWorker | ApplyWorker | UndoWorker | HistoryWorker
+class SuggestWorker(QObject):
+    """Fill suggestions (or classifications) for a list, off the UI thread.
+
+    One run is several requests; the answers of every batch are emitted as they
+    land (``answers``), so a 200-row list fills in as the provider answers rather
+    than freezing until the last one.  ``cancel`` flips a ``threading.Event`` the
+    runner checks between batches: nothing is sent after that, and the outcome
+    that comes back says it was cancelled.
+    """
+
+    stage = Signal(str)
+    """What the run is doing ('Asking stub for 3 suggestions')."""
+
+    progress = Signal(object)
+    """One :class:`spacesage.ai.BatchProgress` tick per finished batch."""
+
+    answers = Signal(object)
+    """One batch's answers, already in display form: ``tuple[AISuggestion, ...]``."""
+
+    finished = Signal(object)
+    """The finished ``SuggestOutcome`` / ``ClassifyOutcome`` (``ok`` says how it went)."""
+
+    failed = Signal(str)
+    """The run could not even start (no provider, invalid config)."""
+
+    def __init__(
+        self,
+        *,
+        service: AIService,
+        items: Sequence[ItemFacts],
+        use_case: str = "suggest",
+        context: Mapping[str, Any] | None = None,
+        batch_size: int | None = None,
+        max_items: int | None = None,
+        use_cache: bool = True,
+    ) -> None:
+        super().__init__()
+        self._service = service
+        self._items = tuple(items)
+        self._use_case = use_case
+        self._context = context
+        self._batch_size = batch_size
+        self._max_items = max_items
+        self._use_cache = use_cache
+        self._cancel = threading.Event()
+        self._provider = ""
+        self._model = ""
+
+    @property
+    def use_case(self) -> str:
+        """``suggest`` or ``classify`` -- also the verb in the stage lines."""
+        return self._use_case
+
+    @property
+    def total(self) -> int:
+        """How many items the run was asked to cover."""
+        return len(self._items)
+
+    def cancel(self) -> None:
+        """Ask the run to stop after the batch in flight (thread-safe)."""
+        self._cancel.set()
+
+    @property
+    def cancelled(self) -> bool:
+        """True once :meth:`cancel` was called."""
+        return self._cancel.is_set()
+
+    @Slot()
+    def run(self) -> None:
+        """Plan and execute the run; every failure is an outcome or a ``failed``."""
+        try:
+            engine = self._service.engine()
+            verb = "classifications" if self._use_case == "classify" else "suggestions"
+            provider = engine.provider()
+            self._provider = provider.name
+            self._model = provider.model
+            self.stage.emit(f"Asking {provider.name} for {len(self._items)} {verb}")
+            call = engine.classify if self._use_case == "classify" else engine.suggest
+            outcome = call(
+                self._items,
+                batch_size=self._batch_size,
+                max_items=self._max_items,
+                context=self._context,
+                on_progress=self.progress.emit,
+                on_results=self._on_answers,
+                cancel=self._cancel,
+                use_cache=self._use_cache,
+            )
+        except Exception as exc:  # a refusal is a dialog, never a crash
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(outcome)
+
+    def _on_answers(self, answers: Mapping[str, Any]) -> None:
+        """Re-shape one batch's raw answers into display form and emit them."""
+        wrapped: list[AISuggestion] = []
+        for answer in answers.values():
+            if isinstance(answer, Classification):
+                wrapped.append(
+                    AISuggestion.from_classification(
+                        answer, provider=self._provider, model=self._model
+                    )
+                )
+            elif isinstance(answer, Suggestion):
+                wrapped.append(
+                    AISuggestion.from_suggestion(answer, provider=self._provider, model=self._model)
+                )
+        if wrapped:
+            self.answers.emit(tuple(wrapped))
+
+
+class ExplainWorker(QObject):
+    """Write one selection's explanation, streaming the prose as it arrives."""
+
+    stage = Signal(str)
+    progress = Signal(object)
+    """Never emitted: an explanation is one request."""
+
+    delta = Signal(str)
+    """A chunk of the explanation, as the provider writes it."""
+
+    finished = Signal(object)
+    """The finished :class:`spacesage.ai.ExplainOutcome`."""
+
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        service: AIService,
+        items: Sequence[ItemFacts],
+        context: Mapping[str, Any] | None = None,
+        use_cache: bool = True,
+    ) -> None:
+        super().__init__()
+        self._service = service
+        self._items = tuple(items)
+        self._context = context
+        self._use_cache = use_cache
+
+    @Slot()
+    def run(self) -> None:
+        """Ask for the explanation; deltas are relayed as they arrive."""
+        try:
+            engine = self._service.engine()
+            self.stage.emit(f"Asking {engine.provider().name} to explain the selection")
+            outcome = engine.explain(
+                self._items,
+                context=self._context,
+                on_delta=self.delta.emit,
+                use_cache=self._use_cache,
+            )
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(outcome)
+
+
+class ReviewWorker(QObject):
+    """Annotate a drafted plan with severity-tagged risks, off the UI thread."""
+
+    stage = Signal(str)
+    progress = Signal(object)
+    """Never emitted: a review is one request over the plan document."""
+
+    finished = Signal(object)
+    """The finished :class:`spacesage.ai.ReviewOutcome`."""
+
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        service: AIService,
+        plan: Mapping[str, Any],
+        plan_path: str | None = None,
+        use_cache: bool = True,
+    ) -> None:
+        super().__init__()
+        self._service = service
+        self._plan = plan
+        self._plan_path = plan_path
+        self._use_cache = use_cache
+
+    @Slot()
+    def run(self) -> None:
+        """Ask for the annotations; a refusal comes back as a failed outcome."""
+        try:
+            engine = self._service.engine()
+            self.stage.emit(f"Asking {engine.provider().name} to review the plan")
+            outcome = engine.review(
+                self._plan, plan_path=self._plan_path, use_cache=self._use_cache
+            )
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(outcome)
+
+
+class ConnectionWorker(QObject):
+    """Test one provider: does it answer, how fast, and which models does it offer."""
+
+    stage = Signal(str)
+    progress = Signal(object)
+    """Never emitted: the check is one or two short requests."""
+
+    finished = Signal(object)
+    """The finished :class:`spacesage.ai.CheckResult` (``ok`` says how it went)."""
+
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        service: AIService,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> None:
+        super().__init__()
+        self._service = service
+        self._provider = provider
+        self._model = model
+
+    @Slot()
+    def run(self) -> None:
+        """Run the check; an unreachable provider is a result, not an exception."""
+        try:
+            engine = self._service.engine_for(self._provider)
+            name = self._provider or engine.provider().name
+            self.stage.emit(f"Asking {name} which models it offers")
+            result = engine.check(model=self._model)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(result)
+
+
+Worker = (
+    AnalysisWorker
+    | PlanWorker
+    | PreviewWorker
+    | ApplyWorker
+    | UndoWorker
+    | HistoryWorker
+    | SuggestWorker
+    | ExplainWorker
+    | ReviewWorker
+    | ConnectionWorker
+)
 """Every worker :class:`BackgroundTask` can run, in one union.
 
 Typing the task against the concrete workers (rather than ``QObject``) keeps the
@@ -348,6 +616,8 @@ class BackgroundTask(QObject):
     stage = Signal(str)
     progress = Signal(object)
     opDone = Signal(object)
+    answers = Signal(object)
+    delta = Signal(str)
     finished = Signal(object)
     failed = Signal(str)
 
@@ -360,10 +630,16 @@ class BackgroundTask(QObject):
         worker.stage.connect(self.stage)
         worker.progress.connect(self.progress)
         # Not every worker has per-item results (the analysis worker does not):
-        # relay it when it is there instead of forcing an unused signal on all.
-        op_done = getattr(worker, "opDone", None)
-        if op_done is not None:
-            op_done.connect(self.opDone)
+        # relay each optional signal when it is there instead of forcing an
+        # unused one onto every worker.
+        for name, relay in (
+            ("opDone", self.opDone),
+            ("answers", self.answers),
+            ("delta", self.delta),
+        ):
+            source = getattr(worker, name, None)
+            if source is not None:
+                source.connect(relay)
         worker.finished.connect(self._on_finished)
         worker.failed.connect(self._on_failed)
 

@@ -18,14 +18,24 @@ The screen's whole job, in the order the product does it:
 5. **Undo** -- the run is journaled in this plan's workspace, which is what the
    ``Undo`` half of :class:`PlanPage` reads.
 
+The AI review (design §10) sits between *approve* and *preview*: the same plan
+document the executor reads goes to the provider, which comes back with
+severity-tagged annotations keyed by action id -- "this delete takes a folder
+that something else still uses" -- and each one can take its action out of the
+plan in place.  An annotation can never approve anything, and nothing it says
+reaches the executor: the plan on disk only changes through the same approval
+path a click uses.
+
 All engine work happens in worker threads (design §9.1); this module renders
 what the engine returned and collects the user's decisions.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import QModelIndex, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -45,12 +55,37 @@ from PySide6.QtWidgets import (
 )
 
 from spacesage import executor, opportunities, planner, planning, stats
-from spacesage.app import dialogs, models, plan_models, state, theme, widgets, workers
+from spacesage.ai import Annotation, ReviewOutcome
+from spacesage.app import (
+    ai_models,
+    dialogs,
+    icons,
+    models,
+    plan_models,
+    state,
+    theme,
+    widgets,
+    workers,
+)
+from spacesage.app.ai_models import AIService
 from spacesage.app.views.undo_view import UndoView
-from spacesage.app.workers import ApplyWorker, BackgroundTask, PlanWorker, PreviewWorker
+from spacesage.app.workers import (
+    ApplyWorker,
+    BackgroundTask,
+    PlanWorker,
+    PreviewWorker,
+    ReviewWorker,
+)
 
 EXECUTE_SHORTCUT = "Ctrl+Return"
 DRY_RUN_SHORTCUT = "Ctrl+D"
+
+REVIEW_SEVERITY_TONES: dict[str, str] = {
+    "danger": "danger",
+    "warning": "warning",
+    "info": "info",
+}
+"""Tone of an annotation's badge (the engine's three severities, painted)."""
 
 ATTENTION_SEVERITY: dict[str, str] = {
     "failed": "blocker",
@@ -66,6 +101,33 @@ quietly did less than it promised is exactly what a user must not have to
 discover later.  A refused action is the engine saying no, so it is a blocker.
 """
 
+REVIEW_ORDER: tuple[str, ...] = ("danger", "warning", "info")
+"""Annotations are shown most severe first (the engine's ordering, kept)."""
+
+
+def _ordered_annotations(outcome: ReviewOutcome | None) -> tuple[Annotation, ...]:
+    """The annotations of a review, most severe first, ties in the model's order."""
+    if outcome is None or not outcome.ok:
+        return ()
+    ranked = sorted(
+        outcome.annotations,
+        key=lambda annotation: (
+            REVIEW_ORDER.index(annotation.severity)
+            if annotation.severity in REVIEW_ORDER
+            else len(REVIEW_ORDER)
+        ),
+    )
+    return tuple(ranked)
+
+
+def _severity_counts(outcome: ReviewOutcome | None) -> dict[str, int]:
+    """``{severity: count}``, most severe first, empty when nothing was flagged."""
+    counts: dict[str, int] = {}
+    for annotation in _ordered_annotations(outcome):
+        severity = annotation.severity if annotation.severity in REVIEW_ORDER else "info"
+        counts[severity] = counts.get(severity, 0) + 1
+    return counts
+
 
 class PlanView(QWidget):
     """Screen 3's plan half: the draft, its approval, the run and its results."""
@@ -80,7 +142,10 @@ class PlanView(QWidget):
     """The user asked for the journal history (the other half of the page)."""
 
     built = Signal(object)
-    """A :class:`spacesage.planning.PlanSession` was composed and adopted."""
+    """A fresh plan was adopted (the page moves the switch to the plan half)."""
+
+    aiChanged = Signal()
+    """The plan review ran (the shell re-reads the AI status and the meter)."""
 
     def __init__(
         self,
@@ -88,6 +153,7 @@ class PlanView(QWidget):
         *,
         db_path: Path | None = None,
         settings: state.Settings | None = None,
+        ai: AIService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -95,19 +161,28 @@ class PlanView(QWidget):
         self._data_root = Path(data_root) if data_root is not None else state.data_dir()
         self._db_path = Path(db_path) if db_path is not None else state.index_path()
         self._settings = settings if settings is not None else state.Settings.ephemeral()
+        self._ai = ai if ai is not None else AIService(parent=self)
         self._session: planning.PlanSession | None = None
         self._task: BackgroundTask | None = None
         self._busy = False
         self._running = ""
-        """What the running task is doing: ``plan`` / ``preview`` / ``execute``."""
+        """What the running task is doing: ``plan`` / ``preview`` / ``execute`` / ``review``."""
         self._preview_show = True
         self._preview_report: executor.ApplyReport | None = None
         self._apply_report: executor.ApplyReport | None = None
+        self._review: ReviewOutcome | None = None
+        self._review_error = ""
+        """Why the last review call failed (a message, not an outcome)."""
+        self._review_buttons: dict[str, QPushButton] = {}
         self._completed = 0
         self.last_error = ""
         """The engine's own message when the last task failed (tests read it)."""
         self._build()
         self._refresh()
+
+    def ai(self) -> AIService:
+        """The AI layer this screen reviews plans with (the window owns it)."""
+        return self._ai
 
     # -- construction ----------------------------------------------------- #
 
@@ -179,6 +254,9 @@ class PlanView(QWidget):
 
         layout.addWidget(self._build_summary_strip(body))
         layout.addWidget(self._build_table(body), 1)
+
+        self.review_card = self._build_review(body)
+        layout.addWidget(self.review_card)
 
         self.attention_list = widgets.WarningList((), body)
         self.attention_list.setVisible(False)
@@ -478,12 +556,15 @@ class PlanView(QWidget):
         self._session = session
         self._preview_report = None
         self._apply_report = None
+        self._review = None
+        self._review_error = ""
         self.last_error = ""
         self._completed = 0
         self.attention_list.set_warnings(())
         self.result_label.setVisible(False)
         self.warnings.set_warnings(() if session is None else session.draft.warnings)
         self._model.set_draft(None if session is None else session.draft)
+        self._render_review()
         if session is not None:
             self.plan_id_label.setText(f"plan {session.plan_id}")
             self.plan_id_label.setToolTip(f"The plan id every approval binds to: {session.plan_id}")
@@ -618,6 +699,252 @@ class PlanView(QWidget):
             f"Ran {self._completed} of {self.progress.maximum()} · {result.outcome}"
         )
 
+    def _build_review(self, parent: QWidget) -> QWidget:
+        """The AI review card: one button, one verdict line, one row per annotation.
+
+        The card is always there (a plan without a second opinion should look like
+        one); the rows are rebuilt from the last outcome, so a re-review replaces
+        what is on screen rather than piling up.
+        """
+        card = QFrame(parent)
+        card.setObjectName("Card")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(
+            theme.SPACE["md"], theme.SPACE["sm"], theme.SPACE["md"], theme.SPACE["md"]
+        )
+        layout.setSpacing(theme.SPACE["xs"])
+
+        head = QHBoxLayout()
+        head.setSpacing(theme.SPACE["sm"])
+        glyph = QLabel(card)
+        glyph.setPixmap(icons.tone_icon("sparkles", "info", 14).pixmap(14, 14))
+        head.addWidget(glyph)
+        head.addWidget(widgets.section_label("AI review", card))
+        self.review_status = widgets.Badge("", "muted", card)
+        self.review_status.setObjectName("ReviewStatus")
+        head.addWidget(self.review_status)
+        self.review_stage = widgets.ElidedLabel("", card, mode=Qt.TextElideMode.ElideRight)
+        self.review_stage.setObjectName("Faint")
+        head.addWidget(self.review_stage, 1)
+        self.review_button = QPushButton("Review plan with AI", card)
+        self.review_button.setObjectName("AiReview")
+        self.review_button.setIcon(icons.icon("sparkles", theme.tokens().accent_text, 14))
+        self.review_button.setToolTip(
+            "Send the plan document to the provider and come back with risks, keyed by action id"
+        )
+        self.review_button.clicked.connect(lambda: self.review(show=True))
+        head.addWidget(self.review_button)
+        layout.addLayout(head)
+
+        self.review_summary = QLabel("", card)
+        self.review_summary.setObjectName("Muted")
+        self.review_summary.setWordWrap(True)
+        self.review_summary.setVisible(False)
+        layout.addWidget(self.review_summary)
+
+        self.review_rows = QWidget(card)
+        self.review_rows_layout = QVBoxLayout(self.review_rows)
+        self.review_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.review_rows_layout.setSpacing(theme.SPACE["xs"])
+        layout.addWidget(self.review_rows)
+        self._render_review()
+        return card
+
+    def _clear_review_rows(self) -> None:
+        """Drop the annotation rows (they are rebuilt from the outcome)."""
+        self._review_buttons.clear()
+        while self.review_rows_layout.count():
+            item = self.review_rows_layout.takeAt(0)
+            widget = item.widget() if item is not None else None
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
+    def _sync_review_rows(self) -> None:
+        """Re-read the approval each annotation row offers (a click just moved one)."""
+        approved = set(self._model.approved_ids())
+        for action_id, button in self._review_buttons.items():
+            item = self._item_for_action(action_id)
+            withdraw = action_id in approved
+            button.setText("Take out of the plan" if withdraw else "Approve it")
+            button.setEnabled(item is not None and item.executable and withdraw)
+
+    def _render_review(self) -> None:
+        """Paint the last outcome: its summary, then one row per annotation."""
+        self._clear_review_rows()
+        outcome = self._review
+        status = self._ai.status()
+        status_text = ai_models.state_line(status)
+        self.review_status.setText(
+            f"{outcome.provider} / {outcome.model}" if outcome is not None else status_text
+        )
+        self.review_status.set_tone("info" if outcome is not None else "muted")
+        self.review_rows.setVisible(outcome is not None)
+        if outcome is None:
+            self.review_summary.setVisible(True)
+            self.review_summary.setText(
+                self._review_error
+                or ai_models.readiness_hint(status, configured=bool(self._ai.config().providers))
+                or "Ask for a second opinion on this plan before you run it."
+            )
+            return
+        if not outcome.ok:
+            self.review_summary.setVisible(True)
+            self.review_summary.setText(
+                ai_models.outcome_error_text(outcome, fallback="The review could not be completed")
+            )
+            return
+        counts = _severity_counts(outcome)
+        summary = outcome.summary or "The model flagged nothing about this plan."
+        parts = [summary]
+        if counts:
+            parts.append(" · ".join(f"{count} {name}" for name, count in counts.items()))
+        if outcome.rejected:
+            parts.append(
+                f"{len(outcome.rejected)} annotation(s) named actions this plan does not have"
+            )
+        self.review_summary.setVisible(True)
+        self.review_summary.setText(" · ".join(parts))
+        for annotation in _ordered_annotations(outcome):
+            self.review_rows_layout.addWidget(self._annotation_row(annotation))
+        self.review_rows_layout.addStretch(1)
+
+    def _annotation_row(self, annotation: Annotation) -> QWidget:
+        """One annotation: severity, the action it names, and what to do about it."""
+        action_id = str(getattr(annotation, "action_id", ""))
+        severity = str(getattr(annotation, "severity", "info"))
+        row = QFrame(self.review_rows)
+        row.setObjectName("Banner")
+        row.setProperty("severity", severity)
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(
+            theme.SPACE["md"], theme.SPACE["xs"], theme.SPACE["md"], theme.SPACE["xs"]
+        )
+        layout.setSpacing(theme.SPACE["sm"])
+        badge = widgets.Badge(
+            str(getattr(annotation, "label", severity.capitalize())),
+            REVIEW_SEVERITY_TONES.get(severity, "info"),
+            row,
+        )
+        layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
+
+        body = QVBoxLayout()
+        body.setSpacing(0)
+        title = QLabel(str(getattr(annotation, "title", "")), row)
+        title.setWordWrap(True)
+        body.addWidget(title)
+        for line in (getattr(annotation, "detail", ""), getattr(annotation, "recommendation", "")):
+            text = str(line or "")
+            if not text:
+                continue
+            label = QLabel(text, row)
+            label.setObjectName("Muted")
+            label.setWordWrap(True)
+            body.addWidget(label)
+        item = self._item_for_action(action_id)
+        path_label = QLabel(
+            f"{action_id} · {item.action.type} · {item.action.path}"
+            if item is not None
+            else f"{action_id} · not in this plan",
+            row,
+        )
+        path_label.setObjectName("Mono")
+        path_label.setWordWrap(True)
+        body.addWidget(path_label)
+        layout.addLayout(body, 1)
+
+        approved = action_id in self._model.approved_ids()
+        button = QPushButton("Take out of the plan" if approved else "Approve it", row)
+        button.setObjectName(f"ReviewAct_{action_id}")
+        button.setEnabled(item is not None and item.executable and approved)
+        button.setToolTip(
+            "Withdraw the approval: it stays in the plan and never runs"
+            if approved
+            else "Already out of the plan"
+        )
+        button.clicked.connect(lambda: self.take_out(action_id))
+        self._review_buttons[action_id] = button
+        layout.addWidget(button, 0, Qt.AlignmentFlag.AlignTop)
+        return row
+
+    def _item_for_action(self, action_id: str) -> planning.PlanItem | None:
+        """The plan item an annotation names (``None`` when the plan has no such action)."""
+        for item in self._model.items:
+            if item.action.id == action_id:
+                return item
+        return None
+
+    # -- AI review -------------------------------------------------------- #
+
+    def review(self, *, show: bool = True) -> bool:
+        """Ask the provider what is risky about this plan (off the UI thread)."""
+        session = self._session
+        if session is None or self._busy:
+            return False
+        plan = self._plan_document(session)
+        if plan is None:
+            return False
+        self._review_error = ""
+        self._start(
+            ReviewWorker(service=self._ai, plan=plan, plan_path=str(session.workspace.plan_path)),
+            "review",
+        )
+        return True
+
+    def _plan_document(self, session: planning.PlanSession) -> Mapping[str, Any] | None:
+        """The plan as the executor would read it (the review's only input)."""
+        path = session.workspace.plan_path
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            self.last_error = f"the plan document at {path} could not be read: {exc}"
+            self.statusMessage.emit(self.last_error)
+            return None
+        return document if isinstance(document, dict) else None
+
+    def review_outcome(self) -> ReviewOutcome | None:
+        """The last review (tests and the shell read this)."""
+        return self._review
+
+    def review_annotations(self) -> tuple[tuple[str, str, str], ...]:
+        """``(severity, action id, title)`` of every annotation, most severe first."""
+        return tuple(
+            (annotation.severity, annotation.action_id, annotation.title)
+            for annotation in _ordered_annotations(self._review)
+        )
+
+    def take_out(self, action_id: str) -> bool:
+        """Withdraw one action's approval (what an annotation usually asks for)."""
+        return self._model.set_approved(action_id, False)
+
+    def _adopt_review(self, outcome: ReviewOutcome) -> None:
+        """Show the annotations and say what came back."""
+        self._review = outcome
+        self._render_review()
+        if not outcome.ok:
+            message = ai_models.outcome_error_text(
+                outcome, fallback="The plan review could not be completed"
+            )
+            self.last_error = message
+            self.statusMessage.emit(message)
+            self.aiChanged.emit()
+            return
+        counts = _severity_counts(outcome)
+        worst = (
+            "nothing flagged"
+            if not counts
+            else ", ".join(f"{count} {name}" for name, count in counts.items())
+        )
+        summary = (
+            f"AI review: {worst} across {len(self._model.items):,} action(s) · "
+            f"{outcome.usage.total_tokens:,} tokens"
+            + (" · from the cache" if outcome.cache_hit else "")
+            + "."
+        )
+        self.statusMessage.emit(summary)
+        self._toast(summary, tone="warning" if counts.get("danger") else "info")
+        self.aiChanged.emit()
+
     def _on_finished(self, kind: str, result: object) -> None:
         """One worker finished: turn its report into what the screen shows."""
         if kind == "plan":
@@ -632,11 +959,22 @@ class PlanView(QWidget):
             self._finish_task()
             if isinstance(result, executor.ApplyReport):
                 self._adopt_result(result)
+        elif kind == "review":
+            self._finish_task()
+            if isinstance(result, ReviewOutcome):
+                self._adopt_review(result)
 
     def _on_failed(self, kind: str, message: object) -> None:
         """One worker failed: the engine's own sentence goes to a dialog, never a traceback."""
         self._finish_task()
         self.last_error = str(message)
+        if kind == "review":
+            self._review = None
+            self._review_error = self.last_error
+            self._render_review()
+            self.statusMessage.emit(f"The plan review could not be completed: {self.last_error}")
+            self.aiChanged.emit()
+            return
         titles = {
             "plan": "Could not build the plan",
             "preview": "The dry run could not be completed",
@@ -792,6 +1130,9 @@ class PlanView(QWidget):
         self.reject_all_button.setEnabled(has_draft and not self._busy and approved > 0)
         self.preview_button.setEnabled(has_draft and not self._busy and approved > 0)
         self.execute_button.setEnabled(has_draft and not self._busy and model.ready_to_execute())
+        self.review_button.setEnabled(has_draft and not self._busy)
+        self.review_stage.setText("Reviewing…" if self._running == "review" else "")
+        self._sync_review_rows()
         self.approval_label.setToolTip(
             "Approve or take out actions: what is approved here is what a run executes"
         )
@@ -816,12 +1157,16 @@ class PlanPage(QWidget):
 
     goToOpportunities = Signal()
 
+    aiChanged = Signal()
+    """A review ran: the shell re-reads the AI status and the meter (design §10)."""
+
     def __init__(
         self,
         data_root: Path | None = None,
         *,
         db_path: Path | None = None,
         settings: state.Settings | None = None,
+        ai: AIService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -844,7 +1189,9 @@ class PlanPage(QWidget):
         layout.addWidget(switcher)
 
         self.stack = QStackedWidget(self)
-        self.plan = PlanView(data_root, db_path=db_path, settings=settings, parent=self.stack)
+        self.plan = PlanView(
+            data_root, db_path=db_path, settings=settings, ai=ai, parent=self.stack
+        )
         self.undo = UndoView(data_root, parent=self.stack)
         self.stack.addWidget(self.plan)
         self.stack.addWidget(self.undo)
@@ -857,6 +1204,7 @@ class PlanPage(QWidget):
         self.undo.goToPlan.connect(lambda: self.show_plan())
         self.plan.goToOpportunities.connect(self.goToOpportunities.emit)
         self.plan.built.connect(self._on_built)
+        self.plan.aiChanged.connect(self.aiChanged.emit)
 
     # -- navigation ------------------------------------------------------- #
 
