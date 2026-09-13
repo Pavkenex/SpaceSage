@@ -705,6 +705,33 @@ spacesage ai check|summarize|review            # AI diagnostics
 
 The app ships as a **windowed single-file executable** (`spacesage.exe` — PyInstaller; no console window; app icon + version info). Windows build in the release workflow; Linux smoke build in CI so the spec cannot rot. The engine stays `pip install spacesage`-able for headless/scripting use (no GUI deps). MIT license. Semantic versioning + CHANGELOG.
 
+How that lands in the tree:
+
+- `packaging/spacesage.spec` — the one-file windowed build; bundles the icon
+  subset, the app icon and its attribution file as data, and attaches the `.ico`
+  plus a version resource generated from `spacesage.__version__` (loaded through
+  `packaging/win_version.py`) on Windows.
+- `spacesage/app/assets/app-icon.svg` — the single drawing. `scripts/make_app_icons.py`
+  renders every derivative from it (`.ico` for the executable, PNGs for the docs),
+  so the taskbar icon and the shipped icon cannot drift.
+- `spacesage.app.main` — `--self-check` (the Qt probe, in a subprocess, and
+  re-executed as the packaged binary when frozen), `--version`, and
+  `--capture PATH [--capture-delay MS]`, which renders the real window offscreen
+  to a PNG and exits non-zero if it could not. Those three flags are the whole
+  packaged-app contract; a windowed build with no console at all still reports
+  (`main.ensure_streams`).
+- `.github/workflows/ci.yml` (`package` job) builds the bundle on every push,
+  runs it, and uploads the binary *and* its render — a bundle that starts and
+  paints is the only evidence that counts.
+- `.github/workflows/release.yml` — pushing a `v*` tag checks the tag against the
+  version the app reports, builds the Windows exe and the Linux bundle, smoke-runs
+  both, and attaches them (with their renders) to the GitHub release.
+- `tests/test_packaging.py` gates all of the above: it execs the spec, parses the
+  workflows, checks the version resource's format, samples the committed icon
+  derivatives against a fresh render, and keeps the README app-first and its
+  links resolving. Nothing in packaging is generated per build except the version
+  resource, so there is nothing else to golden.
+
 ## 15. Roadmap (post-v0.1)
 
 - Near-duplicate images (pHash) and sampled-video similarity.

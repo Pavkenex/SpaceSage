@@ -61,6 +61,7 @@ class MainWindow(QMainWindow):
         self._theme_manager = theme_manager
         self._ai = ai_service if ai_service is not None else ai_models.AIService(parent=self)
         self.setWindowTitle("SpaceSage")
+        self.setWindowIcon(icons.app_icon())
         self.resize(1440, 900)
         self.setMinimumSize(980, 620)
         self._build()

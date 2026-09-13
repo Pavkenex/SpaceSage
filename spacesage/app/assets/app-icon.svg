@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- SpaceSage app icon: a drive with a spark of judgement over it.
+       Three flat shapes and a slot, sized so the mark still reads at 16px
+       (rendered by scripts/make_app_icons.py). Colours are the dark-theme
+       tokens: raised surface, light text, success green. -->
+  <title>SpaceSage</title>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="#1C1F24"/>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="none" stroke="#2B3038" stroke-width="4"/>
+
+  <!-- the spark: what SpaceSage adds to a disk full of files -->
+  <path d="M128 22 Q139 57 176 68 Q139 79 128 114 Q117 79 80 68 Q117 57 128 22 Z" fill="#4CC38A"/>
+
+  <!-- the drive: a body, a slot cut out of it, one activity light -->
+  <rect x="50" y="130" width="156" height="102" rx="22" fill="#E8EAEE"/>
+  <rect x="74" y="154" width="108" height="15" rx="7.5" fill="#1C1F24"/>
+  <circle cx="170" cy="201" r="13" fill="#4CC38A"/>
+</svg>

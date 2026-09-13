@@ -8,10 +8,24 @@ import sys
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
 from spacesage.app import icons, state, theme
-from spacesage.app.main import MISSING_QT_MESSAGE, fatal, probe_qt
+from spacesage.app.main import (
+    CAPTURE_FLAG,
+    CAPTURE_USAGE,
+    MISSING_QT_MESSAGE,
+    SELF_CHECK_FLAG,
+    UsageError,
+    capture_request,
+    ensure_streams,
+    fatal,
+    probe_qt,
+    run,
+    self_check_command,
+)
 from spacesage.app.windows import PAGES, MainWindow
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -134,6 +148,21 @@ def test_pixmap_is_tinted_with_the_requested_colour() -> None:
     assert colours, "the icon rendered nothing"
 
 
+def test_the_window_carries_the_packaged_app_icon(window: MainWindow) -> None:
+    """The window icon is the mark the executable is built with (design §14).
+
+    One source SVG, rendered at every size Qt asks for: the taskbar icon, the
+    alt-tab icon and the `.ico` the release ships cannot drift apart because
+    nothing is stored per size.
+    """
+    assert not window.windowIcon().isNull(), "the window has no icon"
+    assert icons.APP_ICON_SIZES == (16, 24, 32, 48, 64, 128, 256)
+    source = icons.app_icon_source()
+    assert "<svg" in source and "4CC38A" in source, "the bundled mark is the real source"
+    rendered = set(window.windowIcon().availableSizes())
+    assert {QSize(size, size) for size in icons.APP_ICON_SIZES} <= rendered
+
+
 # --------------------------------------------------------------------------- #
 # Startup failure paths (no window needed)
 # --------------------------------------------------------------------------- #
@@ -234,3 +263,121 @@ def test_data_dir_honours_the_env_override(tmp_path: Path) -> None:
     assert state.data_dir({"SPACESAGE_DATA_DIR": str(tmp_path)}) == tmp_path
     assert state.index_path({"SPACESAGE_DATA_DIR": str(tmp_path)}).name == "spacesage.db"
     assert state.ensure_data_dir({"SPACESAGE_DATA_DIR": str(tmp_path / "new")}).is_dir()
+
+
+def test_the_self_check_command_fits_the_build_it_runs_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A frozen build has no ``python`` to spawn, so the probe is the executable.
+
+    ``sys.frozen`` is PyInstaller's own marker; the frozen branch also has to
+    come back through the entry point's flag, not through a module path that
+    does not exist inside the bundle.
+    """
+    assert self_check_command() == [sys.executable, "-m", "spacesage.app", SELF_CHECK_FLAG]
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert self_check_command() == [sys.executable, SELF_CHECK_FLAG]
+
+
+def test_a_windowed_build_without_streams_can_still_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--windowed`` on Windows can start with ``sys.stdout is None``.
+
+    Every internal flag prints its verdict, so a bundled app that starts this way
+    would raise instead of reporting -- and that is the build CI and a released
+    ``spacesage.exe`` actually run.
+    """
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    ensure_streams()
+    assert sys.stdout is not None and sys.stderr is not None
+    print("captured artifacts/package/smoke.png (1440x900)")  # must not raise
+    sys.stderr.write("spacesage: could not render\n")
+
+
+# --------------------------------------------------------------------------- #
+# The capture path: the evidence a packaged build produces (design §14)
+# --------------------------------------------------------------------------- #
+
+
+def test_capture_request_reads_a_path_and_a_delay() -> None:
+    """``--capture PATH [--capture-delay MS]``, with the default delay."""
+    assert capture_request([CAPTURE_FLAG, "shot.png", "--capture-delay", "1500"]) == (
+        Path("shot.png"),
+        1500,
+    )
+    assert capture_request([CAPTURE_FLAG, "shot.png"]) == (Path("shot.png"), 800)
+    assert capture_request(["--self-check"]) is None
+
+
+@pytest.mark.parametrize(
+    ("args", "fragment"),
+    [
+        ([CAPTURE_FLAG], "needs the PNG path"),
+        ([CAPTURE_FLAG, "shot.png", "--capture-delay"], "needs milliseconds"),
+        (
+            [CAPTURE_FLAG, "shot.png", "--capture-delay", "soon"],
+            "needs milliseconds, not 'soon'",
+        ),
+        ([CAPTURE_FLAG, "shot.png", "--capture-delay", "-5"], "cannot be negative"),
+    ],
+)
+def test_capture_request_explains_bad_arguments(args: list[str], fragment: str) -> None:
+    """A malformed command line says what it wanted instead of opening a window."""
+    with pytest.raises(UsageError) as raised:
+        capture_request(args)
+    assert fragment in str(raised.value)
+
+
+def test_a_broken_capture_flag_exits_with_the_usage_on_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The exit code and the message a user actually sees (no window opened)."""
+    assert run([CAPTURE_FLAG]) == 2
+    captured = capsys.readouterr()
+    assert "needs the PNG path" in captured.err
+    assert CAPTURE_USAGE in captured.err
+
+
+def test_capture_writes_a_real_render_of_the_window(tmp_path: Path) -> None:
+    """The packaged build proves itself with ``--capture``; so does a source run.
+
+    A real process renders the real window offscreen and exits 0 -- and the PNG
+    has to be a paint, not a blank frame, which is what the colour count checks.
+    """
+    target = tmp_path / "capture.png"
+    env = dict(os.environ)
+    env.setdefault("QT_QPA_PLATFORM", "offscreen")
+    env["SPACESAGE_DATA_DIR"] = str(tmp_path / "data")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "spacesage.app",
+            CAPTURE_FLAG,
+            str(target),
+            "--capture-delay",
+            "300",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(REPO_ROOT),
+        env=env,
+        timeout=180,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert f"captured {target}" in completed.stdout
+
+    image = QImage(str(target))
+    assert not image.isNull(), "the capture flag exited 0 without an image"
+    assert image.width() >= 1200 and image.height() >= 800
+    colours = {
+        image.pixel(x, y)
+        for y in range(0, image.height(), 23)
+        for x in range(0, image.width(), 23)
+        if image.pixelColor(x, y).alpha() > 0
+    }
+    assert len(colours) > 20, "the capture is blank"

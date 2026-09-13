@@ -20,8 +20,16 @@ from spacesage.app import theme
 
 _PACKAGE = "spacesage.app.assets.icons"
 
+#: The app's own mark -- the source SVG of the icon the executable ships with.
+#: ``scripts/make_app_icons.py`` renders the .ico and the PNG from this one file.
+APP_ICON = "app-icon.svg"
+ASSETS_PACKAGE = "spacesage.app.assets"
+
 #: Rendered at 2x and drawn at the logical size, so icons stay sharp on HiDPI.
 DEVICE_RATIO = 2
+
+#: The sizes :func:`app_icon` hands Qt: window chrome, taskbar and alt-tab.
+APP_ICON_SIZES: tuple[int, ...] = (16, 24, 32, 48, 64, 128, 256)
 
 
 class IconError(RuntimeError):
@@ -69,6 +77,37 @@ def tone_icon(name: str, tone: str, size: int = 16) -> QIcon:
     """A QIcon tinted with a semantic tone (``success``, ``danger``, ``T1``, ...)."""
     foreground, _ = theme.tokens().tone(tone)
     return icon(name, foreground, size)
+
+
+def app_icon_source() -> str:
+    """The bundled app-icon SVG (the mark the executable is built with)."""
+    path = resources.files(ASSETS_PACKAGE).joinpath(APP_ICON)
+    if not path.is_file():
+        raise IconError(f"the app icon {APP_ICON!r} is not bundled")
+    return path.read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=1)
+def app_icon() -> QIcon:
+    """The window/taskbar icon, built from the source SVG at every size Qt asks for.
+
+    One file, no per-size PNGs to keep in sync: a packaged build ships the same
+    SVG the icon generator rendered the ``.ico`` from, so the window icon and the
+    executable's icon cannot drift apart.
+    """
+    source = app_icon_source()
+    rendered = QIcon()
+    for size in APP_ICON_SIZES:
+        renderer = QSvgRenderer(QByteArray(source.encode("utf-8")))
+        target = QPixmap(size, size)
+        target.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(target)
+        try:
+            renderer.render(painter)
+        finally:
+            painter.end()
+        rendered.addPixmap(target)
+    return rendered
 
 
 ACTION_ICONS: dict[str, str] = {

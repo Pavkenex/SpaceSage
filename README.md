@@ -1,36 +1,119 @@
 # SpaceSage
 
+![SpaceSage — the Opportunities screen: ranked cleanup suggestions with a tier, a confidence and the reasoning for every row](artifacts/gui/opportunities.png)
+
 **Turn a [WizTree](https://www.diskanalyzer.com/) export into a complete, safety-gated course of action for a full disk.**
 
-You already know *what* is big — you exported the tree with WizTree. SpaceSage turns that export into *what to do about it*, item by item:
+You already know *what* is big — you exported the tree with WizTree. SpaceSage is the desktop app that turns that export into *what to do about it*, item by item:
 
 - **Delete** — quarantine-first and undoable, with a plain-language rationale for every candidate.
-- **Move** to another drive — cold media, archives, game libraries, dev caches; free-space aware.
-- **Link back** — junctions / symlinks so apps keep working after their data moves.
+- **Move** to another drive — cold media, archives, game libraries, dev caches; free-space aware, with a link left behind so apps keep working.
+- **Link back** — junctions / symlinks so a program still finds its data after the folder moved.
 - **Native fixes** — use the owning tool's own mechanism (Steam library move, WSL/Docker disk compact, DISM component cleanup, Storage Sense, …) instead of raw deletion.
 - **Review** — everything ambiguous stays flagged and untouched until a human decides.
 
-Every suggestion carries a risk tier, a confidence, an estimated space gain, and a "why". Nothing executes without an itemized, approved plan. Execution is dry-run by default; every action is journaled and undoable.
+Every suggestion carries a risk tier, a confidence, an estimated space gain and a "why". Nothing executes without an itemized, approved plan: analysis is read-only, execution is dry-run first, every operation is journaled, and everything can be undone. That contract is written down in [`docs/safety.md`](docs/safety.md).
 
-Optionally plug in **any OpenAI-compatible LLM** (cloud or local — Ollama, LM Studio, vLLM, OpenAI, OpenRouter, …) to help classify the ambiguous long tail, narrate the plan, or review it for risks. The AI can suggest; it can never execute.
+Optionally plug in **any OpenAI-compatible LLM** (cloud or local — Ollama, LM Studio, vLLM, OpenAI, OpenRouter, …) to help classify the ambiguous long tail, narrate a row, or review a plan for risks. The AI can suggest; it can never execute.
 
-It is a **desktop application** (PySide6/Qt) — a real windowed program, not a web app and not a CLI: import your export, review suggestions, approve a plan, execute it, undo if needed. It ships as a single portable executable (Windows, PyInstaller). Underneath, the analysis engine is a zero-dependency Python library (usable on its own), and a minimal internal CLI exists for development and automation.
+It is a **desktop application** (PySide6/Qt) — a real windowed program, not a web app and not a CLI. It ships as a single portable executable for Windows (PyInstaller; no console window, app icon and version resource) and as a Linux bundle. Underneath, the analysis engine is a **zero-dependency Python library** usable on its own (see [Engine](#engine-library--cli) below).
+
+## Quick start
+
+1. **Get the app** — `spacesage.exe` from this project's releases page (Windows), the Linux bundle, or from source:
+   ```sh
+   uv venv .venv && uv pip install -e '.[dev]'    # or: uv sync
+   uv run python -m spacesage.app                 # the window (also: the `spacesage-app` script)
+   ```
+2. **Export your tree** in WizTree (*Export to CSV* — its feature, not this app's).
+3. **Import it** in SpaceSage, pick the target drive and the free-space reserve, press *Analyze*.
+4. **Review the ranked list**, check what you agree with, **Build plan**.
+5. **Dry-run preview** resolves every approved action to exactly what would happen; **Execute** sits behind one itemized confirmation.
+6. **Undo** is the switch beside *Plan*: every operation is listed, verified by digest and revertible.
+
+The full walkthrough is [`docs/quickstart.md`](docs/quickstart.md); the screen-by-screen reference is [`docs/app-guide.md`](docs/app-guide.md).
+
+## The app in pictures
+
+| | |
+|---|---|
+| ![The Import screen](artifacts/gui/import.png) | ![The dry run: every approved action resolved](artifacts/gui/dryrun.png) |
+| **Import** — drop a WizTree CSV, set target drive / reserve / size floor, analyze on a worker thread. | **Dry run** — the exact operations a run would perform, and nothing on disk is touched. |
+| ![AI suggestions filled into the list](artifacts/gui/suggestions_filled.png) | ![The Undo screen with journals and verification](artifacts/gui/undo.png) |
+| **AI, optionally** — batch-fill suggestions for the undecided rows, explain a row, review a plan; the AI advises, it never executes. | **Undo** — journals, one row per operation, verified against the digest recorded on the way in. |
+
+Every picture above is a real render produced by the GUI test suite and committed under [`artifacts/gui/`](artifacts/gui) — if a screen changes, its evidence changes with it.
 
 ## Status
 
-🚧 In development. The full design and build plan live in [`docs/design.md`](docs/design.md); the AI-vs-deterministic research behind the hybrid architecture is in [`docs/research/ai-and-alternatives.md`](docs/research/ai-and-alternatives.md). Work is tracked as slices in [`docs/slices.md`](docs/slices.md).
+🚧 In development toward **v0.1.0**. The full design and build plan live in [`docs/design.md`](docs/design.md); the AI-vs-deterministic research behind the hybrid architecture is in [`docs/research/ai-and-alternatives.md`](docs/research/ai-and-alternatives.md). Work is tracked as slices in [`docs/slices.md`](docs/slices.md).
 
 ## Docs
 
-- [`docs/design.md`](docs/design.md) — architecture, data model, plan schema, safety model, executor design
-- [`docs/slices.md`](docs/slices.md) — build slices with acceptance criteria
-- [`docs/rules.md`](docs/rules.md) — rule-pack authoring guide (matchers, tiers, actions, ordering)
-- [`docs/research/ai-and-alternatives.md`](docs/research/ai-and-alternatives.md) — research: LLM vs. rules vs. other systems
-- [`docs/adr/`](docs/adr/) — architecture decision records
+| doc | what is in it |
+|---|---|
+| [`docs/quickstart.md`](docs/quickstart.md) | install → import → review → plan → execute → undo |
+| [`docs/app-guide.md`](docs/app-guide.md) | every screen, every control, with real screenshots |
+| [`docs/safety.md`](docs/safety.md) | the tiers, the guardrails, what never happens without confirmation |
+| [`docs/faq.md`](docs/faq.md) | the questions people actually ask (including "does it delete my files?") |
+| [`docs/ai.md`](docs/ai.md) | the optional AI layer: providers, privacy switches, cost control, guardrails |
+| [`docs/design.md`](docs/design.md) | architecture, data model, plan schema, safety model, executor design |
+| [`docs/rules.md`](docs/rules.md) | rule-pack authoring guide (matchers, tiers, actions, ordering) |
+| [`docs/slices.md`](docs/slices.md) | build slices with acceptance criteria |
+| [`docs/dev-environment.md`](docs/dev-environment.md) | the dev container (vendored GL libs, offscreen Qt) |
+| [`docs/adr/`](docs/adr/) | architecture decision records |
+| [`CHANGELOG.md`](CHANGELOG.md) | what changed, release by release |
+
+## Engine (library & CLI)
+
+The engine is the part that reads exports, classifies entries, ranks
+opportunities, plans and executes — UI-agnostic and stdlib-only by design, so it
+runs on headless machines and inside scripts. The app wraps it; a minimal
+internal CLI exposes every stage for development, CI and automation.
+
+```sh
+uv run python -m spacesage --version
+uv run python -m spacesage ingest export.csv --db index.db   # --replace reloads, --progress reports to stderr
+uv run python -m spacesage stats --db index.db                # --by dir|ext|age|app, --top N, --json
+uv run python -m spacesage classify --db index.db             # --rules DIR, --list-rules, --top N, --json
+uv run python -m spacesage candidates --db index.db           # --kind …, --min-size 100M, --top N, --json
+uv run python -m spacesage plan --db index.db --to D: --reserve 20G -o plan.json
+uv run python -m spacesage deepscan PATH... [--min-size 1M]   # live filesystem, read-only, hashes proofs
+uv run python -m spacesage apply plan.json --approve approved.json            # dry run: resolves, touches nothing
+uv run python -m spacesage apply plan.json --approve approved.json --execute  # quarantines/moves/links, journaling
+uv run python -m spacesage undo spacesage.journal.jsonl                       # reverses them, newest first, verifying
+```
+
+Notes that matter if you script it:
+
+- **`ingest` → `stats` → `classify` → `candidates` → `plan` are read-only**
+  (`--materialize` is the explicit exception: it rebuilds the derived tables).
+  `apply` is the only verb that touches the disk, and only what an approval
+  manifest names.
+- **The approval manifest is the gate**: `{schema, plan_id, approved: [a1, …]}`
+  bound to that plan's own `plan_id`. A manifest for another plan, or one naming
+  an id the plan does not have, is refused before anything is resolved.
+- **`apply` without `--execute` is the dry run** and prints exactly what would
+  happen; `--execute` re-validates every item against the live filesystem first
+  and skips-with-a-reason anything that does not hold.
+- **The plan document is deterministic**: `plan_id` is a sha256 over the source
+  and the action list, so re-planning the same index reproduces it exactly.
+- **`deepscan`** is the verified-duplicate counterpart of the list's weak-dupe
+  clusters: group by size, hash the first 64 KiB, read the full content only
+  where it is still ambiguous, count hard links as one physical copy, and never
+  follow a reparse point.
+
+The engine is installable on its own (`pip install spacesage`, no GUI
+dependencies) and the library entry points are `spacesage.ingest`,
+`spacesage.stats`, `spacesage.rules`, `spacesage.candidates`,
+`spacesage.planner`, `spacesage.deepscan` and `spacesage.executor`. The details —
+schema, scoring, plan format, executor semantics — are in
+[`docs/design.md`](docs/design.md) §3–§8.
 
 ## Development
 
-Requires Python ≥ 3.11 and [uv](https://docs.astral.sh/uv/). The engine is stdlib-only; dev tooling lives in the `[dev]` extra (installed by default via `[tool.uv] default-extras`).
+Requires Python ≥ 3.11 and [uv](https://docs.astral.sh/uv/). The engine is
+stdlib-only; dev tooling lives in the `[dev]` extra, PyInstaller in `[build]`.
 
 ```sh
 uv venv .venv
@@ -42,79 +125,30 @@ uv run ruff format --check .   # formatting
 uv run mypy spacesage          # types (strict)
 ```
 
-The internal CLI (development/automation only) runs as `uv run python -m spacesage --version`, or via the installed `spacesage` console script. Every engine stage is available now (all read-only except `apply`):
+GUI tests are pytest-qt on Qt's offscreen platform (no display needed); the
+screenshot renders land in [`artifacts/gui/`](artifacts/gui) and are asserted to
+be real paints, not blank frames. In the dev container, source the helper first
+(`source scripts/gui-env.sh` — vendored GL libs + `QT_QPA_PLATFORM=offscreen`,
+see [`docs/dev-environment.md`](docs/dev-environment.md)).
+
+### Packaging
 
 ```sh
-uv run python -m spacesage ingest export.csv --db index.db   # --replace reloads, --progress reports to stderr
-uv run python -m spacesage stats --db index.db                # --by dir|ext|age|app, --top N, --json, --materialize
-uv run python -m spacesage classify --db index.db             # --rules DIR, --list-rules, --top N, --json, --materialize
-uv run python -m spacesage candidates --db index.db           # --kind …, --min-size 100M, --top N, --json
-uv run python -m spacesage plan --db index.db --to D: --reserve 20G -o plan.json   # --free SIZE, --no-links, --json
-uv run python -m spacesage deepscan PATH... [--min-size 1M]   # --top N, --json, --progress (live filesystem, read-only)
-uv run python -m spacesage apply plan.json --approve approved.json            # DRY RUN: resolves every op, touches nothing
-uv run python -m spacesage apply plan.json --approve approved.json --execute  # quarantines/moves/links, journaling each step
-uv run python -m spacesage undo spacesage.journal.jsonl                       # reverses them, newest first, verifying
+uv run --extra build pyinstaller packaging/spacesage.spec --noconfirm \
+    --distpath dist --workpath build/pyinstaller     # -> dist/spacesage[.exe]
+./dist/spacesage --self-check                        # packaged app reports its Qt platform
+QT_QPA_PLATFORM=offscreen ./dist/spacesage --capture artifacts/package/smoke.png
 ```
 
-`ingest` streams a WizTree export into the SQLite index; `stats` aggregates it (biggest directories and files, per-extension totals, age buckets, per-app footprints) from file rows only and reports folder-row disagreements as data-quality warnings. It is read-only unless `--materialize` is passed, which also rebuilds the derived `dir_sizes` / `app_footprints` tables for later stages.
-
-`classify` runs the rule packs over every entry — built-in packs plus your own in `~/.config/spacesage/rules/` (`--rules DIR` to point elsewhere), shadowed by rule id — and prints per-tier / per-category counts and sizes plus the largest entries no rule recognised. It is read-only unless `--materialize` is passed, which writes the derived `categories` table (schema v3). Every rule carries a category, a risk tier, an action, a confidence and a plain-language rationale; see [`docs/rules.md`](docs/rules.md) to write your own.
-
-`candidates` turns those verdicts into the ranked opportunities list — biggest estimated win first, per action kind: `delete` (quarantine candidates), `move` (data to relocate, grouped at directory level), `stale` (big, cold entries to review), `dupes-weak` (same name **and** size; explicitly flagged as unverified) and `app` (the largest application footprints, each carrying the advice of its biggest matching folder or an explicit "no action" with the reason). Every row carries its tier, confidence, the plain-language why and the four score factors (`bytes × tier weight × confidence × recency`), so a rank can be re-derived by hand. It is read-only, and folder rows aggregate their descendants — a candidate that another, higher-priority kind already claimed is not listed twice.
-
-`plan` composes those candidates into the course of action (`plan.json`, schema `spacesage.plan/v1`): quarantines first (T1 before T2, biggest gain first), then moves onto the target drives you pick (`--to D:` per drive, each respecting `free_bytes − reserve`; `--free SIZE` states free space for drives this machine cannot measure), then compressions, then review and native-tool items. Directories move whole and get a junction back, files get a symlink flagged as needing elevation (or `--no-links` for no link at all), destinations mirror the source below `<target>\Moved`, and **T3 paths are never executable** — they stay review items. An app footprint whose advice is "delete the cache inside it" is a review item too; only what the rules actually told us to act on becomes an action. Byte totals never double count a folder and its children, and the whole document is deterministic: `plan_id` is a sha256 over the source and the action list, so re-planning the same index reproduces it exactly. It prints a Markdown summary (for reports and chat) and writes the JSON with `-o plan.json`. It is read-only.
-
-`deepscan` is the optional live counterpart to the weak duplicate clusters: it walks the paths you name on *this* machine and proves which same-size files are byte-identical — group by size, hash the first 64 KiB, then read the full content only where it is still ambiguous. It never follows a symlink, junction or other reparse point, and it counts hard-linked paths as **one physical copy instead of free space** (deleting a hard link reclaims nothing). Every group gets the newest copy as the keeper (ties: the shortest path) and, when all copies sit on one volume, a suggestion to hardlink the rest back — the same bytes reclaimed while every path stays valid; across volumes it says so and the extra copies have to be deleted or moved. It prints the groups biggest win first (`--min-size 1M`, `--top N`, `--json`, `--progress`) and is strictly read-only: it reports, it never touches.
-
-`apply` is the only stage that touches the disk, and it only ever touches what a human approved. It takes `plan.json` plus an `approved.json` manifest (`{schema, plan_id, approved: [a1, …]}`) that is bound to that plan's `plan_id`: a manifest for another plan, or one naming an action id the plan does not have, is refused before anything is resolved. Without `--execute` it is a **dry run** — every approved action is resolved into the exact operation it would perform (where the quarantine goes, where the move lands, which link keeps the old path alive) and nothing is created, moved or written. Executing re-validates each item against the live filesystem first (still there? still a real folder and not a symlink that appeared meanwhile? not locked? destination still free? not a volume root, system folder or profile root?), verifies every payload by digest once it has landed, and skips-with-a-reason anything that doesn't hold — a locked file is never yanked, and a symlink that can't be created is discovered *before* the move, so no path is left dangling. "Delete" always means **quarantine**: a same-volume move into `_spacesage_quarantine/<plan token>/…` with an audit `manifest.json` in the store (the bytes are still there — purging is a later, separate decision). Everything is appended to a JSONL journal in two phases (before *and* after each primitive, with digests), which is what makes `spacesage undo` real: it reverses the operations newest first — the link before the move, the move before the quarantine — verifying each payload against the digest recorded on the way in, and reports "nothing to undo" if you run it twice. Windows uses `robocopy /MOVE /E /COPYALL` (ACL-preserving, with `shutil.move` as the fallback) and `mklink /J` junctions; POSIX uses `shutil.move` and symlinks. See [`docs/design.md`](docs/design.md) §8.
-
-Plan & execute views, AI suggestions and packaging are the remaining desktop slices — see [`docs/slices.md`](docs/slices.md).
-
-## Desktop app (the product surface)
-
-The product is the PySide6 window, not the CLI. Engine first, then the window: `[gui]` is the app's only extra (`PySide6>=6.8`), and the engine stays stdlib-only.
-
-```sh
-uv sync                       # dev extras include PySide6 + pytest-qt
-uv run python -m spacesage.app               # source run (also: the `spacesage-app` script)
-uv run python -m spacesage.app --self-check  # Qt/platform probe, exits 0
-```
-
-On a bare Linux box the Qt runtime libraries are required (`libegl1 libgl1 libglvnd0 libxkbcommon0`); in this project's dev container source the helper first (`source scripts/gui-env.sh` — vendored GL libs + `QT_QPA_PLATFORM=offscreen`, see [`docs/dev-environment.md`](docs/dev-environment.md)). If Qt cannot start, the app says so in a real dialog (zenity/kdialog/xmessage) instead of dying with a stack trace.
-
-**Screen 1 — Import.** Drop a WizTree CSV (or browse for it), pick the target drive, the free-space reserve and the smallest entry worth listing, then *Analyze*. The engine runs on a worker thread and reports rows/sec while it reads; the UI never blocks.
-
-**Screen 2 — Opportunities (the core).** One table of files *and* folders, biggest estimated gain first:
-
-- columns: select | path (mono) | size | est. gain | suggested solution (badge + one-line why) | tier | confidence;
-- folder rows aggregate their descendants, and checking a folder *covers* its contents — the cascade keeps at most one row per branch, so no byte is counted twice;
-- filters for state / tier / category / size, plus search, bulk select and a summary strip (totals, drives, per-state gain);
-- **"No action" rows are never hidden**: an entry the rules deliberately leave alone renders with its reason, because that is a decision, not a gap;
-- the details pane carries the full reasoning, side effects, alternatives and the move-destination editor.
-
-Everything the screens show comes from `spacesage/opportunities.py` (rows, filters, cascade, summary) — a Qt-free view-model over the engine; the widgets hold no SQL and the engine never runs on the UI thread.
-
-**Screen 3 — Plan & Execute, and Undo.** The checked rows become one plan, and the plan becomes files that moved:
-
-- the action bar under the list names the checked count and their estimated gain and offers **Build plan** (disabled until something is checked);
-- the plan screen shows every action the selection produced — a folder row's actions cascade into the plan, and `REVIEW`/`NATIVE` items are listed as *advice* that can never be approved;
-- each click rewrites `approved.json` for this plan's own `plan_id` (in `<data dir>/plans/<token>/`), so the approval on disk is always what the user decided;
-- **Dry-run preview** resolves every approved action into exactly what would happen (quarantine destination, move destination, the link that follows, and any refusal) and touches nothing;
-- **Execute** sits behind one itemized, danger-styled confirmation listing every action; the run reports per item as it goes, and everything that failed, was refused or had to be skipped is surfaced as a banner — never hidden;
-- **Undo** (the switch beside *Plan*) lists the app's journals, reverts all or a selection with each payload verified against the digest recorded on the way in, and shows a status per operation.
-
-Without a mouse: **Space** checks the row under the cursor in any of the three lists (check in Opportunities, approve in the plan, revert-selection in Undo — an advice row refuses and says why), **Ctrl+F** jumps to the search, **Ctrl+1..4** switch pages, and Executing or previewing a plan has its own shortcuts.
-
-`spacesage/planning.py` is the Qt-free seam (`PlanRequest` → `PlanDraft` → `PlanSession` → journal history); the screens only render what it returns.
-
-GUI tests are pytest-qt on Qt's offscreen platform (no display needed) and include the screenshot renders:
-
-```sh
-source scripts/gui-env.sh && uv run pytest         # engine + GUI suites
-uv run pytest tests/gui -q                         # just the desktop app
-```
-
-The renders land in `artifacts/gui/` (`import.png`, `opportunities.png`, `details.png`, the dark-theme variant, and the loop's `plan.png` / `dryrun.png` / `confirm.png` / `execute.png` / `undo.png`) and are asserted to be real paints, not blank frames. The plan and undo renders are driven over a live sandbox tree (`tests/fixtures/gen_live.py`), so they show a run that really ran and the journal it left.
+The spec ([`packaging/spacesage.spec`](packaging/spacesage.spec)) builds a
+**one-file windowed** app — no console window, app icon from
+[`spacesage/app/assets/app-icon.svg`](spacesage/app/assets/app-icon.svg), and a
+Windows version resource generated from `spacesage.__version__`. CI builds and
+*runs* that bundle on every push (the `package` job, with the smoke render as an
+artifact); pushing a `v*` tag runs the release workflow, which builds the Windows
+exe and the Linux bundle, smoke-tests both and attaches them to the release. The
+render the Linux bundle produced for itself is committed at
+[`artifacts/package/packaged-linux.png`](artifacts/package/packaged-linux.png).
 
 ## License
 
