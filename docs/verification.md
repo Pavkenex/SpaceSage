@@ -94,16 +94,25 @@ card):
 - **The renders carry the run's clock.** Timestamps in the screens mean
   `artifacts/gui/*.png` go stale on every run (the same wart the screenshot
   suite has always had).
-- **Python 3.11 can abort at interpreter shutdown after a green run.** On
-  3.11.15 with the locked PySide6 6.11.2 the Qt suites finish (`tests/gui`:
-  `109 passed`) and then the interpreter dies while finalizing (`Fatal Python
-  error: bool_dealloc ... Garbage-collecting`), so `pytest` exits 134 even
-  though nothing failed; the same suites on 3.13.5 exit 0. It needs
-  accumulation across files -- a single file (`test_shell.py`,
-  `test_screenshots.py`) exits 0. CI's `pytest` matrix has a 3.11 leg, so that
-  job's exit code can lie for a green suite; it is filed as its own card with
-  the logs, and it is not a regression of this pass (`tests/gui` alone
-  reproduces it).
+- **CPython's singletons are parked for the run (Python 3.11).** The locked
+  PySide6 corrupts the reference counts of `None`/`True`/`False` on Python->C++
+  calls, in both directions: one `QApplication.processEvents()` call drops
+  `None` by one on 3.11.15 (`4611686018427387903` -> `4611686018427367903` over
+  20000 calls, with the live-object and `gc.get_referrers(None)` counts
+  unmoved), and an app-shaped window lifecycle *adds* about 2000 per window.
+  On 3.11 the singletons are ordinary refcounted objects, so a long enough run
+  drained them and the interpreter aborted while finalizing -- *after* an
+  all-green summary (`Fatal Python error: bool_dealloc ...`, exit 134), which
+  is how this suite used to lie about `109 passed`; 3.12+ never shows it,
+  because the singletons are immortal there (PEP 683). The session now parks
+  them out of reach (`tests/qt_shutdown_guard.py`, applied by
+  `tests/conftest.py`) -- what 3.12 does natively -- and
+  `tests/gui/test_shutdown_guard.py` holds both halves: a child that pumps
+  20000 turns exits 0, and without the guard it dies at exit. The drain needs
+  accumulation across files (`tests/gui` alone reproduced it; a single file
+  exited 0), hence the session-wide guard. The app's own runs have not been
+  observed to abort (the leak direction dominates there), but their counts are
+  wrong in the same way; card t_1b70d03f carries the measurements.
 - **The bars clip at the smallest window.** Measured on the shell's minimum
   size (980x620): the Plan screen's approval line paints 137px of the 599px it
   needs and the Opportunities hint 366px of 398px. At the reference size

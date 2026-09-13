@@ -21,6 +21,14 @@ if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
 from ai_stub import StubServer  # noqa: E402 - needs the path set up above
+from qt_shutdown_guard import keep_singletons_alive  # noqa: E402 - likewise
+
+# The Qt binding loses references to the CPython singletons on every Python->C++
+# call; on Python 3.11 that drains them and the interpreter aborts while
+# finalizing, *after* an all-green summary (exit 134).  ``tests/qt_shutdown_guard``
+# carries the measurements and what the guard does; it is a no-op without Qt and
+# on 3.12+, where the singletons already are immortal.
+keep_singletons_alive()
 
 
 @pytest.fixture

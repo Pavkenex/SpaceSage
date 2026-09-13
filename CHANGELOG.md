@@ -10,7 +10,17 @@ not understand.
 
 ## [Unreleased]
 
-Nothing yet: `v0.1.0` (below) is the current release.
+### Fixed
+
+- **The Qt suites exit 0 on Python 3.11, so CI's 3.11 leg stops lying.** The
+  locked PySide6 corrupts the reference counts of CPython's singletons on
+  Python->C++ calls; on 3.11 a long enough run drained `None`/`True`/`False` and
+  the interpreter aborted while finalizing *after* an all-green summary (exit
+  134). The test session now parks them out of reach
+  (`tests/qt_shutdown_guard.py`, applied by `tests/conftest.py`), which is what
+  CPython 3.12 does natively, and `tests/gui/test_shutdown_guard.py` holds both
+  halves: twenty thousand event loop turns exit 0, and without the guard the
+  same child dies at exit. No production code changes.
 
 ## [0.1.0] - 2026-09-13
 

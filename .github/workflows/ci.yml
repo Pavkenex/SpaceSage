@@ -65,10 +65,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.11", "3.13"]
-        # 3.11 note: with the locked PySide6 the Qt suites can abort during
-        # interpreter finalization *after* an all-green summary, so the leg's
-        # exit code can lie (read the summary, not the status).  Filed as card
-        # t_3540985f; docs/verification.md carries the measurements.
+        # 3.11 note: the locked PySide6 corrupts the reference counts of CPython's
+        # singletons on Python->C++ calls, which drained them and aborted the
+        # interpreter during finalization *after* an all-green summary (exit 134).
+        # The test session parks them out of reach (tests/qt_shutdown_guard.py),
+        # so this leg's exit code means what it says; docs/verification.md has the
+        # measurements.
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install uv
