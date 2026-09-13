@@ -17,7 +17,7 @@
     "db": "<db>",
     "schema_version": 3,
     "as_of": "2026-09-12T12:00:00+00:00",
-    "rules_fingerprint": "e33db6abe4be6aa13a449c0f9536befb6d48d869c9742292e3571131b71d7cf0",
+    "rules_fingerprint": "699c1ce6139d281425b9301aeb786cf475406b1fa1a1e4f131bab0dd5c53130f",
     "min_size": 104857600,
     "top": 50,
     "links": true,

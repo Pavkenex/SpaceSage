@@ -906,8 +906,22 @@ class RuleSet:
 
     @property
     def fingerprint(self) -> str:
-        """Stable hash of the effective rules (stored with the materialisation)."""
-        payload = json.dumps([rule.to_dict() for rule in self.rules], sort_keys=True)
+        """Stable hash of the effective rules (stored with the materialisation).
+
+        Comparable across machines: the hash covers what a rule *does*, not
+        where its pack file happens to live.  ``source`` is the pack's path
+        (an absolute one for the built-ins, inside the installed package), and
+        hashing it made the same ruleset hash differently in every checkout --
+        so a plan built from ``tests/fixtures/data/plan.csv`` could never be
+        reproduced by a fresh clone, only by the machine that generated it.
+        """
+        payload = json.dumps(
+            [
+                {key: value for key, value in rule.to_dict().items() if key != "source"}
+                for rule in self.rules
+            ],
+            sort_keys=True,
+        )
         return sha256(payload.encode("utf-8")).hexdigest()
 
     def summary(self) -> RuleSummary:
