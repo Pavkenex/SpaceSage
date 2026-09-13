@@ -32,7 +32,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from spacesage import __version__
-from spacesage.app import ai_models, icons, state, theme
+from spacesage.app import ai_models, icons, qt_shutdown_guard, state, theme
 from spacesage.app.windows import MainWindow
 
 SELF_CHECK_FLAG = "--self-check"
@@ -263,6 +263,12 @@ def schedule_capture(
 
 def run(argv: Sequence[str] | None = None) -> int:
     """Run the desktop app; returns the process exit code."""
+    # The first thing the product does: park the singleton reference counts the
+    # Qt binding corrupts on Python->C++ calls.  A session that drains them
+    # aborts the interpreter -- mid-run or while it finalizes, after the user's
+    # work -- and the app's session length is unbounded.  See
+    # ``spacesage.app.qt_shutdown_guard`` for the measurements.
+    qt_shutdown_guard.keep_singletons_alive()
     ensure_streams()
     args = list(sys.argv if argv is None else argv)
     if VERSION_FLAG in args:

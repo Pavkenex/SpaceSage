@@ -68,8 +68,9 @@ jobs:
         # 3.11 note: the locked PySide6 corrupts the reference counts of CPython's
         # singletons on Python->C++ calls, which drained them and aborted the
         # interpreter during finalization *after* an all-green summary (exit 134).
-        # The test session parks them out of reach (tests/qt_shutdown_guard.py),
-        # so this leg's exit code means what it says; docs/verification.md has the
+        # The test session and the app itself park them out of reach
+        # (tests/qt_shutdown_guard.py, spacesage/app/qt_shutdown_guard.py), so this
+        # leg's exit code means what it says; docs/verification.md has the
         # measurements.
     steps:
       - uses: actions/checkout@v7.0.1

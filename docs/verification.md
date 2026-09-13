@@ -99,20 +99,39 @@ card):
   calls, in both directions: one `QApplication.processEvents()` call drops
   `None` by one on 3.11.15 (`4611686018427387903` -> `4611686018427367903` over
   20000 calls, with the live-object and `gc.get_referrers(None)` counts
-  unmoved), and an app-shaped window lifecycle *adds* about 2000 per window.
-  On 3.11 the singletons are ordinary refcounted objects, so a long enough run
-  drained them and the interpreter aborted while finalizing -- *after* an
-  all-green summary (`Fatal Python error: bool_dealloc ...`, exit 134), which
-  is how this suite used to lie about `109 passed`; 3.12+ never shows it,
-  because the singletons are immortal there (PEP 683). The session now parks
-  them out of reach (`tests/qt_shutdown_guard.py`, applied by
+  unmoved). On 3.11 the singletons are ordinary refcounted objects, so a long
+  enough run drained them and the interpreter aborted while finalizing --
+  *after* an all-green summary (`Fatal Python error: bool_dealloc ...`, exit
+  134), which is how this suite used to lie about `109 passed`; 3.12+ never
+  shows it, because the singletons are immortal there (PEP 683). The session
+  now parks them out of reach (`tests/qt_shutdown_guard.py`, applied by
   `tests/conftest.py`) -- what 3.12 does natively -- and
   `tests/gui/test_shutdown_guard.py` holds both halves: a child that pumps
   20000 turns exits 0, and without the guard it dies at exit. The drain needs
   accumulation across files (`tests/gui` alone reproduced it; a single file
-  exited 0), hence the session-wide guard. The app's own runs have not been
-  observed to abort (the leak direction dominates there), but their counts are
-  wrong in the same way; card t_1b70d03f carries the measurements.
+  exited 0), hence the session-wide guard.
+- **The app parks them too, because its sessions drain.** The app-shaped probe
+  that first measured the product path *added* references (about 1500 per fresh
+  window, exit 0) -- but that is the shape of a probe, not of a session: the
+  app builds one window per run, and the calls every interaction after it makes
+  net a drain. Decomposed per call on the same interpreter, against the real
+  window and listing: re-adopting a listing (`set_listing`) drops ~92
+  references to `None`, a status-bar update (`set_status`) 3, a theme switch
+  ~12, a `resize` 1 and an event-loop turn 1, while `grab()` adds under one.
+  A simulated session of exactly those calls -- a status update and a window
+  drag per round, a theme switch every 25th round, a re-analysis every 100th --
+  drained 11.9 references to `None` per round (13562 at the start) and the
+  interpreter aborted at finalization (exit 134); a window drag alone (a resize
+  and one event-loop turn per frame, which is what fires the elided labels'
+  Python `resizeEvent` on every layout pass) drains 2 per frame, and 20000
+  event-loop turns abort mid-run (`none_dealloc`, while initialized). So the
+  product parks them from `spacesage/app/main.py`, before any QApplication is
+  built (`spacesage/app/qt_shutdown_guard.py` -- the same function as the
+  harness's), and `tests/gui/test_app_shutdown_guard.py` holds it out of
+  process: a child that boots through `spacesage.app:main` and pumps 20000
+  event-loop turns exits 0, with the boot counts out of reach. Both guards come
+  out together when the binding stops losing references -- the probe in
+  `tests/gui/test_shutdown_guard.py` is what says so.
 - **At the smallest window the bars elide; they no longer clip.** The shell
   allows a 980x620 window (`MainWindow.setMinimumSize`) and several rows need
   more width than that, so what cannot fit now gives way *with a sign*: the Plan

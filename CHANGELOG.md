@@ -20,7 +20,22 @@ not understand.
   (`tests/qt_shutdown_guard.py`, applied by `tests/conftest.py`), which is what
   CPython 3.12 does natively, and `tests/gui/test_shutdown_guard.py` holds both
   halves: twenty thousand event loop turns exit 0, and without the guard the
-  same child dies at exit. No production code changes.
+  same child dies at exit. That fix is test-side only.
+- **The app parks the singletons too, so a long Python 3.11 session cannot
+  abort it.** The corruption the suites hit runs in the product as well, and
+  the product's sessions do drain: re-adopting a listing drops about 92
+  references to `None`, a status-bar update 3, a theme switch ~12, and a
+  `resize` or an event-loop turn 1 each, while only *building* a window adds
+  (~1500 -- and the app builds one per run). A simulated session of exactly
+  those calls (status update and window drag per round, a theme switch every
+  25th, a re-analysis every 100th) drained 11.9 references to `None` a round
+  and the interpreter aborted at finalization (exit 134); a window drag drains
+  2 per frame, and 20000 event-loop turns abort it mid-run. The product boot now
+  parks them (`spacesage/app/qt_shutdown_guard.py`, the same function as the
+  harness's guard) from `spacesage/app/main.py`, before any QApplication is
+  built, and `tests/gui/test_app_shutdown_guard.py` holds it out of process: a
+  child that boots through `spacesage.app:main` and pumps 20000 event-loop
+  turns exits 0. `docs/verification.md` carries the measurements.
 - **The action bars no longer clip at the shell's smallest window.** At 980x620
   a row can need more width than it is given, and a plain `QLabel` or
   `QPushButton` then paints past its own edge: the Plan toolbar's figure read
