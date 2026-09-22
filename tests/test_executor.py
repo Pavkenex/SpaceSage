@@ -150,7 +150,14 @@ def test_protected_reason_refuses_non_absolute_and_wildcard_paths(path: str) -> 
     assert backend.protected_reason(path) is not None
 
 
-def test_home_directory_is_protected() -> None:
+def test_home_directory_is_protected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # A runner user's real home can sit under a profile parent (the GitHub
+    # runners' /home/runner does), where the profile rule speaks first -- so
+    # the home rule itself is proven against a home this test owns.
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))  # Windows expands ~ from this
     assert backend.protected_reason(os.path.expanduser("~")) == "the home directory"
 
 

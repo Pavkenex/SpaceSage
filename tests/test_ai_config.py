@@ -6,6 +6,7 @@ at the one place a request could leave the machine - never as a UI hint.
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -13,6 +14,10 @@ import pytest
 
 from spacesage.ai import AIConfig, AIError, ProviderConfig
 from spacesage.ai import config as ai_config
+
+POSIX_ONLY = pytest.mark.skipif(
+    os.name == "nt", reason="POSIX permission bits (key_warning is a no-op on Windows)"
+)
 
 
 def test_there_is_no_provider_until_one_is_configured() -> None:
@@ -90,6 +95,7 @@ def test_a_provider_with_no_key_source_is_left_alone() -> None:
     assert config.is_ready() is True
 
 
+@POSIX_ONLY
 def test_a_world_readable_key_file_is_flagged(tmp_path: Path) -> None:
     key_file = tmp_path / "key"
     key_file.write_text("sk-not-a-real-key\n", encoding="utf-8")
@@ -289,10 +295,16 @@ def test_the_cache_path_follows_the_environment(tmp_path: Path) -> None:
 
 def test_the_config_home_is_per_platform(tmp_path: Path) -> None:
     windows = ai_config.default_config_path({"APPDATA": r"C:\Users\matija\AppData\Roaming"})
-    posix = ai_config.default_config_path({"XDG_CONFIG_HOME": str(tmp_path)})
 
     assert windows.name == "ai.toml"
-    assert posix == tmp_path / "spacesage" / "ai.toml"
+    if os.name == "nt":
+        # Windows keeps its config under the profile's AppData; XDG is not read.
+        assert ai_config.default_config_path({"XDG_CONFIG_HOME": str(tmp_path)}) == (
+            Path.home() / "AppData" / "Roaming" / "spacesage" / "ai.toml"
+        )
+    else:
+        posix = ai_config.default_config_path({"XDG_CONFIG_HOME": str(tmp_path)})
+        assert posix == tmp_path / "spacesage" / "ai.toml"
 
 
 def test_providers_keep_their_order_when_replaced(tmp_path: Path) -> None:

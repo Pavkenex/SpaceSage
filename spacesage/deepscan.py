@@ -677,14 +677,22 @@ class _Scanner:
         else:
             self.candidates += 1
             self.candidate_bytes += info.st_size
+            # The file identity comes from a following stat: for a regular,
+            # non-reparse path it describes the same file the no-follow stat
+            # just did, and on Windows only a handle-based stat reports the
+            # file index at all -- which is what hard-link detection feeds on.
+            try:
+                identity = os.stat(entry.path)
+            except OSError:
+                identity = info
             self.by_size.setdefault(info.st_size, []).append(
                 _ScanFile(
                     path=entry.path,
                     size=info.st_size,
                     mtime=int(info.st_mtime),
                     mtime_ns=info.st_mtime_ns,
-                    dev=_int_or_none(getattr(info, "st_dev", None)),
-                    ino=_int_or_none(getattr(info, "st_ino", None)),
+                    dev=_int_or_none(getattr(identity, "st_dev", None)),
+                    ino=_int_or_none(getattr(identity, "st_ino", None)),
                     links=int(getattr(info, "st_nlink", 1) or 1),
                 )
             )

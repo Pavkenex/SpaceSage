@@ -45,19 +45,35 @@ windows_only = pytest.mark.skipif(os.name != "nt", reason="Windows-only path")
 
 
 def _probe_file_identities() -> bool:
-    """Does this machine's filesystem report ``st_dev``/``st_ino`` at all?"""
+    """Can this machine's filesystem back the hard-link tests at all?
+
+    More than ``st_dev``/``st_ino`` existing is needed: two hard links to one
+    file have to *share* one identity, and ``os.link`` has to actually make a
+    hard link (a scratch volume may copy, or refuse).  When this returns
+    False the hard-link tests skip; on a real NTFS drive they run.
+    """
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
         probe = Path(tmp) / "probe.bin"
         probe.write_bytes(b"x")
-        info = probe.stat()
-    return bool(getattr(info, "st_ino", 0)) and bool(getattr(info, "st_dev", 0))
+        twin = Path(tmp) / "twin.bin"
+        try:
+            os.link(probe, twin)
+        except OSError:
+            return False
+        first = probe.stat()
+        second = twin.stat()
+    return (
+        bool(getattr(first, "st_ino", 0))
+        and bool(getattr(first, "st_dev", 0))
+        and (first.st_dev, first.st_ino) == (second.st_dev, second.st_ino)
+    )
 
 
 IDENTITY_FS = _probe_file_identities()
 requires_identity = pytest.mark.skipif(
-    not IDENTITY_FS, reason="the filesystem does not report file identities (no hardlinks)"
+    not IDENTITY_FS, reason="this filesystem cannot make hard links that share one identity"
 )
 
 

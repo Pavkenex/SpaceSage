@@ -10,6 +10,21 @@ not understand.
 
 ## [Unreleased]
 
+### Added
+
+- **OpenCode Zen preset**: the provider list offers OpenCode Zen
+  (`https://opencode.ai/zen/v1`, key from `OPENCODE_API_KEY`, default model
+  `deepseek-v4-flash`), and the client sends the routing headers it requires
+  (`x-opencode-session`, `x-opencode-client`) on every request aimed at the
+  gateway -- chat, streaming, the connection test and model refresh.
+
+### Fixed
+
+- **Hard-link detection works on Windows**: the scan reads the file identity
+  from a following stat, because the no-follow stat there reports no file
+  index -- hard-linked twins are detected as one physical copy, not as
+  reclaimable duplicates.
+
 ## [0.1.0] - 2026-09-13
 
 The first release: the engine, the desktop app, the optional AI layer, the

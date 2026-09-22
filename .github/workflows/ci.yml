@@ -53,7 +53,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
       - name: Install the project
-        run: uv sync --frozen
+        # --python pins the venv to the matrix interpreter: without it uv sync
+        # picks its own default and a leg would type-check another Python.
+        run: uv sync --frozen --python ${{ matrix.python-version }}
       - name: Type check (strict)
         run: uv run --frozen mypy spacesage
 
@@ -80,7 +82,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
       - name: Install the project
-        run: uv sync --frozen
+        # --python pins the venv to the matrix interpreter: without it uv sync
+        # picks its own default and a leg would silently test another Python.
+        run: uv sync --frozen --python ${{ matrix.python-version }}
       - name: Install Qt's runtime libraries (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1 libglvnd0 libxkbcommon0 libdbus-1-3
@@ -94,11 +98,13 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          uv run --frozen pytest --ignore=tests/e2e 2>&1 | tee pytest-output.txt
+          uv run --frozen pytest --ignore=tests/e2e -rs 2>&1 | tee pytest-output.txt
       - name: Annotate the failures
         if: failure()
         shell: bash
         run: |
+          uv run --frozen python -VV | sed 's/^/::notice::/' || true
+          grep -E '^SKIPPED' pytest-output.txt | head -20 | sed 's/^/::notice::/' || true
           lines="$(grep -E '^(FAILED|ERROR) ' pytest-output.txt | head -40 || true)"
           if [ -z "$lines" ]; then lines="$(tail -20 pytest-output.txt || true)"; fi
           printf '%s\n' "$lines" | sed 's/^/::error::/'
@@ -120,18 +126,20 @@ jobs:
           python-version: "3.13"
           enable-cache: true
       - name: Install the project
-        run: uv sync --frozen
+        run: uv sync --frozen --python "3.13"
       - name: Install Qt's runtime libraries
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1 libglvnd0 libxkbcommon0 libdbus-1-3
       - name: Run the acceptance pass
         shell: bash
         run: |
           set -o pipefail
-          uv run --frozen pytest tests/e2e -q 2>&1 | tee pytest-output.txt
+          uv run --frozen pytest tests/e2e -q -rs 2>&1 | tee pytest-output.txt
       - name: Annotate the failures
         if: failure()
         shell: bash
         run: |
+          uv run --frozen python -VV | sed 's/^/::notice::/' || true
+          grep -E '^SKIPPED' pytest-output.txt | head -20 | sed 's/^/::notice::/' || true
           lines="$(grep -E '^(FAILED|ERROR) ' pytest-output.txt | head -40 || true)"
           if [ -z "$lines" ]; then lines="$(tail -20 pytest-output.txt || true)"; fi
           printf '%s\n' "$lines" | sed 's/^/::error::/'

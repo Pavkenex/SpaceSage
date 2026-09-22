@@ -349,7 +349,12 @@ def test_capture_writes_a_real_render_of_the_window(tmp_path: Path) -> None:
     """
     target = tmp_path / "capture.png"
     env = dict(os.environ)
-    env.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.name == "nt":
+        # The offscreen plugin does not rasterize widget.grab() on Windows;
+        # the native platform does -- the way the release smoke renders.
+        env["QT_QPA_PLATFORM"] = "windows"
+    else:
+        env.setdefault("QT_QPA_PLATFORM", "offscreen")
     env["SPACESAGE_DATA_DIR"] = str(tmp_path / "data")
     completed = subprocess.run(
         [

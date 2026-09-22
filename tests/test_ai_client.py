@@ -8,6 +8,8 @@ into deltas, retries only where they help, and every failure arriving as a coded
 from __future__ import annotations
 
 import socket
+import time
+import urllib.error
 import urllib.request
 
 import pytest
@@ -184,12 +186,19 @@ def test_an_empty_envelope_is_a_bad_response(ai_stub: StubServer) -> None:
 
 
 def test_a_closed_port_is_not_mistaken_for_a_timeout() -> None:
-    """A closed loopback port fails fast (the OS says no), it does not hang."""
+    """A closed loopback port fails fast (the OS says no), it does not hang.
+
+    Some machines -- the Windows CI runners' loopback is one -- drop a closed
+    port instead of refusing it, and then the socket genuinely times out; the
+    classification itself is covered deterministically below, and this test
+    only proves the fast-refusal shape where the OS produces it.
+    """
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
     sock.close()
 
+    started = time.monotonic()
     with pytest.raises(AIError) as caught:
         AIClient(
             ProviderConfig(
@@ -201,9 +210,39 @@ def test_a_closed_port_is_not_mistaken_for_a_timeout() -> None:
             ),
             sleep=lambda _seconds: None,
         ).chat((Message(role="user", content="hi"),))
+    elapsed = time.monotonic() - started
 
+    if caught.value.code == "timeout" and elapsed >= 1.0:
+        pytest.skip("this machine's loopback drops a closed port instead of refusing it")
     assert caught.value.code == "unreachable"
     assert str(port) in caught.value.message or "connect" in caught.value.message.lower()
+
+
+def test_the_transport_tells_a_refusal_from_a_stall() -> None:
+    """The classification itself, on every platform: a refused connection is
+    ``unreachable``, a stall is ``timeout`` -- no OS in the way, the opener
+    is owned by the test."""
+    provider = ProviderConfig(
+        name="stub", kind="custom", base_url="http://127.0.0.1:1/v1", model="stub-model"
+    )
+
+    def refusing(request: urllib.request.Request, timeout: float) -> object:
+        raise urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+
+    def stalling(request: urllib.request.Request, timeout: float) -> object:
+        raise TimeoutError("timed out")
+
+    with pytest.raises(AIError) as caught:
+        AIClient(provider, opener=refusing, sleep=lambda _: None, retries=0).chat(
+            (Message(role="user", content="hi"),)
+        )
+    assert caught.value.code == "unreachable"
+
+    with pytest.raises(AIError) as caught:
+        AIClient(provider, opener=stalling, sleep=lambda _: None, retries=0).chat(
+            (Message(role="user", content="hi"),)
+        )
+    assert caught.value.code == "timeout"
 
 
 def test_cancel_stops_before_the_call(ai_stub: StubServer) -> None:
