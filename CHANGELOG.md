@@ -10,9 +10,13 @@ not understand.
 
 ## [Unreleased]
 
-## [0.1.2] - 2026-09-22
+## [0.1.3] - 2026-09-22
 
 ### Fixed
+- The exe smoke steps wait for the windowed build to exit before reading
+  its numbers (PowerShell returns immediately for GUI-subsystem
+  processes, so the render check used to race the app and read the PNG
+  before it existed).
 - An unhandled exception during startup now writes a full traceback to
   `<data dir>/logs/crash-<stamp>.log` and shows a message naming that file
   (a native Windows message box where Qt cannot show one), instead of the
