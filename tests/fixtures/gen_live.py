@@ -116,20 +116,33 @@ def _mtime_text(path: Path) -> str:
 
 
 def _totals(path: Path) -> tuple[int, int, int]:
-    """``(bytes, files, folders)`` below ``path`` (links counted as entries)."""
+    """``(bytes, files, folders)`` below ``path`` (links counted as entries).
+
+    A directory the walk cannot read -- a system directory owned by another
+    user, an entry that vanished mid-walk -- contributes nothing instead of
+    failing the export: the rows describe what can be seen, and an export of
+    a live volume has the same blind spots WizTree's own does.
+    """
     total = 0
     files = 0
     folders = 0
-    for entry in sorted(path.iterdir()):
-        if entry.is_dir() and not entry.is_symlink():
-            folders += 1
-            sub_bytes, sub_files, sub_folders = _totals(entry)
-            total += sub_bytes
-            files += sub_files
-            folders += sub_folders
-        elif entry.is_file():
-            files += 1
-            total += entry.stat().st_size
+    try:
+        entries = sorted(path.iterdir())
+    except OSError:
+        return total, files, folders
+    for entry in entries:
+        try:
+            if entry.is_dir() and not entry.is_symlink():
+                folders += 1
+                sub_bytes, sub_files, sub_folders = _totals(entry)
+                total += sub_bytes
+                files += sub_files
+                folders += sub_folders
+            elif entry.is_file():
+                files += 1
+                total += entry.stat().st_size
+        except OSError:
+            continue
     return total, files, folders
 
 

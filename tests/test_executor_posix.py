@@ -8,7 +8,6 @@ tree byte for byte afterwards.  The Windows job runs the same scenarios through
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import shutil
@@ -16,7 +15,16 @@ from pathlib import Path
 
 import pytest
 
-from fixtures import gen_executor
+# ``fcntl`` and the POSIX backend only exist on POSIX: skip the whole module
+# before the imports run, so the file still collects on Windows (where the
+# same scenarios run through ``tests/test_executor_win.py`` and the ``win``
+# backend).
+if os.name != "posix":
+    pytest.skip("POSIX-only filesystem semantics", allow_module_level=True)
+
+import fcntl  # POSIX-only, guarded just above
+
+from fixtures import gen_executor  # imports the POSIX backend
 from spacesage import executor, planner
 from spacesage.executor import backend, posix
 
