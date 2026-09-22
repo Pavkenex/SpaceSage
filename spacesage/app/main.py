@@ -21,7 +21,6 @@ Three things this module takes seriously:
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
@@ -33,6 +32,7 @@ from PySide6.QtWidgets import QApplication
 
 from spacesage import __version__
 from spacesage.app import ai_models, icons, qt_shutdown_guard, state, theme
+from spacesage.app.crash import fatal, report_crash
 from spacesage.app.windows import MainWindow
 
 SELF_CHECK_FLAG = "--self-check"
@@ -82,16 +82,26 @@ def ensure_streams() -> None:
 
 
 def self_check() -> int:
-    """``--self-check``: create a QApplication, report the platform, exit."""
+    """``--self-check``: create a QApplication, report the platform, exit.
+
+    The font line is the frozen build's honesty check: the release smoke
+    prints it, so a bundle that cannot resolve a text font is visible in the
+    run's annotations instead of only in a render nobody reads.
+    """
     try:
         from PySide6.QtCore import qVersion
+        from PySide6.QtGui import QFontDatabase
         from PySide6.QtWidgets import QApplication
     except ImportError as exc:  # pragma: no cover - the probe reports this first
         print(f"PySide6 is not importable: {exc}", file=sys.stderr)
         return 2
     existing = QApplication.instance()
     application = existing if isinstance(existing, QApplication) else QApplication([])
-    print(f"qt {qVersion()} platform {application.platformName()}")
+    families = QFontDatabase.families()
+    print(
+        f"qt {qVersion()} platform {application.platformName()} "
+        f"fonts {len(families)} ui {theme.resolve_family(theme.UI_FAMILIES)!r}"
+    )
     return 0
 
 
@@ -135,43 +145,6 @@ def probe_qt(
     if detail:
         return detail[-1]
     return f"the Qt self check exited with code {completed.returncode}"
-
-
-def fallback_dialog(message: str) -> bool:
-    """Show ``message`` without Qt, through zenity/kdialog/xmessage.
-
-    Returns ``True`` when something displayed it; ``False`` means the message on
-    stderr is all the user gets (still a clean exit, never a traceback).
-    """
-    commands: tuple[tuple[str, list[str]], ...] = (
-        ("zenity", ["--error", "--title=SpaceSage", f"--text={message}"]),
-        ("kdialog", ["--error", message, "--title", "SpaceSage"]),
-        ("xmessage", ["-center", message]),
-    )
-    for name, args in commands:
-        if shutil.which(name) is None:
-            continue
-        try:
-            subprocess.run([name, *args], check=False, timeout=120)
-        except (OSError, subprocess.SubprocessError):
-            continue
-        return True
-    return False
-
-
-def fatal(
-    message: str,
-    *,
-    dialog: Callable[[str], bool] | None = None,
-    stream: object | None = None,
-) -> int:
-    """Report a startup failure and return the process exit code."""
-    out = sys.stderr if stream is None else stream
-    print(f"spacesage: {message}", file=out)  # type: ignore[arg-type]
-    shown = (dialog if dialog is not None else fallback_dialog)(message)
-    if not shown:
-        print("(no dialog tool available: the message above is the report)", file=out)  # type: ignore[arg-type]
-    return 2
 
 
 def create_window(
@@ -262,14 +235,27 @@ def schedule_capture(
 
 
 def run(argv: Sequence[str] | None = None) -> int:
-    """Run the desktop app; returns the process exit code."""
+    """Run the desktop app; returns the process exit code.
+
+    Any unhandled exception between here and the event loop is reported by
+    ``crash.report_crash``: a full traceback in the crash log and a message
+    the user can forward -- never the bootloader's one-line dialog.
+    """
+    ensure_streams()
+    try:
+        return _run(argv)
+    except Exception as exc:
+        return report_crash(exc)
+
+
+def _run(argv: Sequence[str] | None = None) -> int:
+    """The app proper (``run`` only adds the crash net and real streams)."""
     # The first thing the product does: park the singleton reference counts the
     # Qt binding corrupts on Python->C++ calls.  A session that drains them
     # aborts the interpreter -- mid-run or while it finalizes, after the user's
     # work -- and the app's session length is unbounded.  See
     # ``spacesage.app.qt_shutdown_guard`` for the measurements.
     qt_shutdown_guard.keep_singletons_alive()
-    ensure_streams()
     args = list(sys.argv if argv is None else argv)
     if VERSION_FLAG in args:
         print(f"spacesage {__version__}")

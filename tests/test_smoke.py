@@ -44,9 +44,9 @@ def load_ci_workflow() -> dict[str, object]:
 def test_version_constant() -> None:
     # Pinned to the released version: the release workflow refuses a tag that
     # does not match what the package reports, so this is the CI-side half of
-    # that check (v0.1.1 is the tag of the release that first shipped the
-    # OpenCode Zen preset and the Windows path/hard-link fixes).
-    assert spacesage.__version__ == "0.1.1"
+    # that check (v0.1.2 is the tag of the release that first ships the crash
+    # reporter and the native-platform Windows smoke).
+    assert spacesage.__version__ == "0.1.2"
 
 
 def test_installed_metadata_matches_version_constant() -> None:

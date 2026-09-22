@@ -10,6 +10,24 @@ not understand.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-22
+
+### Fixed
+- An unhandled exception during startup now writes a full traceback to
+  `<data dir>/logs/crash-<stamp>.log` and shows a message naming that file
+  (a native Windows message box where Qt cannot show one), instead of the
+  frozen bootloader's one-line "Failed to execute script" box with nothing
+  to forward.
+- The Windows release smoke renders on the native Windows platform: the
+  offscreen plugin does not rasterize text there, so the shipped render
+  showed boxes instead of the window's words.  The smoke now fails when
+  the render is too small to contain text.
+
+### Added
+- `--self-check` reports the resolved UI font and the system's font count;
+  the release smoke prints it into the run's annotations, so a build that
+  cannot see fonts is visible without opening the PNG.
+
 ## [0.1.1] - 2026-09-22
 
 ### Added

@@ -245,7 +245,8 @@ def test_app_launches_in_a_subprocess() -> None:
         timeout=120,
     )
     assert completed.returncode == 0, completed.stderr
-    assert "platform" in completed.stdout and completed.stdout.startswith("qt ")
+    assert completed.stdout.startswith("qt ") and "platform" in completed.stdout
+    assert "fonts" in completed.stdout and " ui " in completed.stdout
 
     version = subprocess.run(
         [sys.executable, "-m", "spacesage.app", "--version"],
