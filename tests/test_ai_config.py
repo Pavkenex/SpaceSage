@@ -37,6 +37,30 @@ def test_every_preset_is_complete_and_valid() -> None:
         assert provider.validated() is provider  # nothing to complain about
 
 
+def test_the_opencode_preset_targets_the_zen_gateway() -> None:
+    """The gateway SpaceSage sends OpenCode's routing headers to, and how to reach it."""
+    preset = ai_config.PRESETS["opencode"]
+    provider = ProviderConfig.from_preset("opencode", kind="opencode")
+
+    assert set(ai_config.preset_choices()) == set(ai_config.PRESETS), "every preset is offered"
+    assert "opencode" in ai_config.preset_choices()
+    assert preset.title == "OpenCode Zen"
+    assert preset.base_url == "https://opencode.ai/zen/v1"
+    assert preset.api_key_env == "OPENCODE_API_KEY"
+    assert preset.model == "deepseek-v4-flash"  # a /chat/completions model on this gateway
+    assert preset.local is False
+    assert preset.pricing_in is None and preset.pricing_out is None
+    assert "x-opencode-session" in preset.note  # the quick-add tooltip says what it sends
+
+    assert provider.kind == "opencode"
+    assert provider.host() == "opencode.ai"
+    assert provider.is_local is False
+    assert provider.chat_url() == "https://opencode.ai/zen/v1/chat/completions"
+    assert provider.models_url() == "https://opencode.ai/zen/v1/models"
+    assert provider.key_present(env={}) is False
+    assert provider.key_present(env={"OPENCODE_API_KEY": "stub-key"}) is True
+
+
 def test_a_cloud_provider_without_a_key_is_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = ProviderConfig.from_preset("openai", kind="openai", api_key_env="OPENAI_API_KEY")
     config = AIConfig(providers=(provider,), default_provider="openai", enabled=True)

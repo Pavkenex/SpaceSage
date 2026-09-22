@@ -7,8 +7,9 @@ generator may turn into an action, and that the user still has to approve.
 
 The modules, in the order the pipeline uses them:
 
-``config``       providers (ollama / lmstudio / openai / openrouter / custom),
-                 the ``ai.toml`` file, local-only mode, per-provider pricing.
+``config``       providers (ollama / lmstudio / openai / openrouter / opencode /
+                 custom), the ``ai.toml`` file, local-only mode, per-provider
+                 pricing.
 ``client``       one OpenAI-compatible transport over stdlib ``urllib``:
                  ``POST /chat/completions`` (SSE streaming) and ``GET /models``,
                  with retries, timeouts and the error taxonomy.

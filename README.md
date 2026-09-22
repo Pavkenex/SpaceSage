@@ -14,7 +14,7 @@ You already know *what* is big — you exported the tree with WizTree. SpaceSage
 
 Every suggestion carries a risk tier, a confidence, an estimated space gain and a "why". Nothing executes without an itemized, approved plan: analysis is read-only, execution is dry-run first, every operation is journaled, and everything can be undone. That contract is written down in [`docs/safety.md`](docs/safety.md).
 
-Optionally plug in **any OpenAI-compatible LLM** (cloud or local — Ollama, LM Studio, vLLM, OpenAI, OpenRouter, …) to help classify the ambiguous long tail, narrate a row, or review a plan for risks. The AI can suggest; it can never execute.
+Optionally plug in **any OpenAI-compatible LLM** (cloud or local — Ollama, LM Studio, vLLM, OpenAI, OpenRouter, OpenCode Zen, …) to help classify the ambiguous long tail, narrate a row, or review a plan for risks. The AI can suggest; it can never execute.
 
 It is a **desktop application** (PySide6/Qt) — a real windowed program, not a web app and not a CLI. It ships as a single portable executable for Windows (PyInstaller; no console window, app icon and version resource) and as a Linux bundle. Underneath, the analysis engine is a **zero-dependency Python library** usable on its own (see [Engine](#engine-library--cli) below).
 

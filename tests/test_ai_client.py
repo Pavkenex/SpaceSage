@@ -8,12 +8,13 @@ into deltas, retries only where they help, and every failure arriving as a coded
 from __future__ import annotations
 
 import socket
+import urllib.request
 
 import pytest
 
 from ai_stub import StubReply, StubServer
 from spacesage.ai import AIClient, AIError, Message, ProviderConfig
-from spacesage.ai.client import http_opener
+from spacesage.ai.client import http_opener, is_opencode_endpoint
 
 
 def provider_for(server: StubServer, **overrides: object) -> ProviderConfig:
@@ -215,3 +216,147 @@ def test_cancel_stops_before_the_call(ai_stub: StubServer) -> None:
 
     assert caught.value.code == "cancelled"
     assert ai_stub.calls == 0
+
+
+# --------------------------------------------------------------------------- #
+# OpenCode Zen: the routing headers the gateway requires
+# --------------------------------------------------------------------------- #
+
+
+def opencode_client_for(
+    server: StubServer, *, session_id: str | None = None, **provider_overrides: object
+) -> AIClient:
+    """A client on the real ``opencode`` preset, aimed at the stub server.
+
+    The preset's *kind* is what marks the endpoint, so the headers are exercised
+    against real HTTP without a request ever leaving loopback: the routing rules
+    are the subject, the gateway address is not.
+    """
+    provider = ProviderConfig.from_preset(
+        "opencode",
+        "opencode",
+        base_url=server.url,
+        model="stub-model",
+        timeout_s=5.0,
+        **provider_overrides,
+    )
+    return AIClient(
+        provider,
+        opener=http_opener,
+        sleep=lambda _seconds: None,
+        retries=0,
+        session_id=session_id,
+    )
+
+
+def test_an_opencode_provider_sends_the_required_routing_headers(ai_stub: StubServer) -> None:
+    ai_stub.queue_text("hello")
+    client = opencode_client_for(ai_stub, session_id="pinned-session")
+
+    client.chat((Message(role="user", content="hi"),))
+
+    headers = ai_stub.chat_requests[-1].headers
+    assert headers["x-opencode-session"] == "pinned-session"
+    assert headers["x-opencode-client"] == "spacesage"
+
+
+def test_the_session_id_is_stable_per_client_and_new_per_instance(ai_stub: StubServer) -> None:
+    """One conversation, one routing id: the client reuses it, the next one does not."""
+    ai_stub.push("first", "second", "third")
+    first = opencode_client_for(ai_stub)
+    first.chat((Message(role="user", content="hi"),))
+    first.chat((Message(role="user", content="again"),))
+    second = opencode_client_for(ai_stub)
+    second.chat((Message(role="user", content="hi"),))
+
+    ids = [request.headers["x-opencode-session"] for request in ai_stub.chat_requests]
+
+    assert len(ids) == 3 and all(ids)  # every request carried one
+    assert ids[0] == ids[1], "the same client keeps its conversation id"
+    assert ids[2] != ids[0], "a new client is a new conversation"
+    assert len(ids[0]) == 32 and set(ids[0]) <= set("0123456789abcdef")  # uuid4().hex
+
+
+def test_the_models_listing_carries_the_routing_headers(ai_stub: StubServer) -> None:
+    """Test connection / Refresh models go through the same header builder."""
+    opencode_client_for(ai_stub, session_id="pinned-session").models()
+
+    assert len(ai_stub.model_requests) == 1
+    headers = ai_stub.model_requests[-1].headers
+    assert headers["x-opencode-session"] == "pinned-session"
+    assert headers["x-opencode-client"] == "spacesage"
+
+
+def test_a_configured_header_overrides_the_routing_default(ai_stub: StubServer) -> None:
+    ai_stub.queue_text("hello")
+    client = opencode_client_for(
+        ai_stub,
+        extra_headers={
+            "x-opencode-session": "my-own-id",
+            "x-opencode-client": "not-spacesage",
+        },
+    )
+
+    client.chat((Message(role="user", content="hi"),))
+
+    headers = ai_stub.chat_requests[-1].headers
+    assert headers["x-opencode-session"] == "my-own-id"
+    assert headers["x-opencode-client"] == "not-spacesage"
+
+
+def test_a_plain_provider_gets_no_routing_headers(ai_stub: StubServer) -> None:
+    ai_stub.queue_text("hello")
+
+    client_for(ai_stub).chat((Message(role="user", content="hi"),))
+
+    headers = ai_stub.chat_requests[-1].headers
+    assert "x-opencode-session" not in headers
+    assert "x-opencode-client" not in headers
+
+
+def test_the_gateway_host_alone_marks_a_provider_as_opencode() -> None:
+    """The preset is convenient, not required: pointing base_url at Zen is enough."""
+
+    def provider(base_url: str) -> ProviderConfig:
+        return ProviderConfig(name="zen", kind="custom", base_url=base_url, model="m")
+
+    assert is_opencode_endpoint(provider("https://opencode.ai/zen/v1")) is True
+    assert is_opencode_endpoint(provider("https://api.opencode.ai:443/zen/v1/")) is True
+    assert is_opencode_endpoint(provider("https://notopencode.ai/zen/v1")) is False
+    assert is_opencode_endpoint(provider("http://127.0.0.1:11434/v1")) is False
+    assert is_opencode_endpoint(ProviderConfig(name="zen", kind="opencode", base_url="")) is True
+
+
+def test_a_provider_pointed_at_the_gateway_sends_the_headers() -> None:
+    """No socket: the request object is captured, and it is the one that counts."""
+    seen: list[urllib.request.Request] = []
+
+    class Response:
+        def read(self, size: int = -1) -> bytes:
+            return b'{"data": [{"id": "deepseek-v4-flash"}]}'
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *exc_info: object) -> bool:
+            return False
+
+    def opener(request: urllib.request.Request, timeout: float) -> Response:
+        seen.append(request)
+        return Response()
+
+    provider = ProviderConfig(
+        name="zen",
+        kind="custom",
+        base_url="https://opencode.ai/zen/v1",
+        model="deepseek-v4-flash",
+    )
+    client = AIClient(
+        provider, opener=opener, sleep=lambda _seconds: None, retries=0, session_id="pinned"
+    )
+
+    assert [info.id for info in client.models()] == ["deepseek-v4-flash"]
+    assert seen[0].full_url == "https://opencode.ai/zen/v1/models"
+    sent = {key.lower(): value for key, value in seen[0].headers.items()}
+    assert sent["x-opencode-session"] == "pinned"
+    assert sent["x-opencode-client"] == "spacesage"

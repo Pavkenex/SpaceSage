@@ -10,6 +10,10 @@ Streaming is real SSE: chunks are parsed as they arrive and handed to an
 ``on_delta`` callback (the details pane's "Explain with AI"), while the full
 text is accumulated for the guardrails to validate at the end.  A server that
 ignores ``stream: true`` and answers with one JSON body is handled too.
+
+Requests to OpenCode Zen carry the routing headers it requires
+(``x-opencode-session`` and ``x-opencode-client``): see
+:func:`is_opencode_endpoint`.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ import socket
 import time
 import urllib.error
 import urllib.request
+import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -40,6 +45,18 @@ from spacesage.ai.errors import (
 
 USER_AGENT = f"spacesage/{__version__}"
 """Sent with every request so a provider's logs can tell where the call came from."""
+
+OPENCODE_HOST = "opencode.ai"
+"""Host (and its subdomains) whose requests carry OpenCode Zen's routing headers."""
+
+OPENCODE_CLIENT = "spacesage"
+"""``x-opencode-client`` value: names this app in OpenCode Zen's logs."""
+
+OPENCODE_SESSION_HEADER = "x-opencode-session"
+"""OpenCode Zen's routing / prompt-cache key: one stable id per conversation."""
+
+OPENCODE_CLIENT_HEADER = "x-opencode-client"
+"""OpenCode Zen's client name header."""
 
 MAX_BODY_BYTES = 8 * 1024 * 1024
 """Hard cap on a non-streaming answer (a runaway provider must not exhaust memory)."""
@@ -129,6 +146,22 @@ def http_opener(request: urllib.request.Request, timeout: float) -> Any:
     return urllib.request.urlopen(request, timeout=timeout)
 
 
+def is_opencode_endpoint(provider: ProviderConfig) -> bool:
+    """True when ``provider`` is OpenCode Zen - by preset kind, or by host.
+
+    OpenCode Zen routes (and prompt-caches) on ``x-opencode-session``, and
+    announced that requests without it may be refused.  The check is the ``opencode``
+    preset *and* the ``opencode.ai`` host, so a hand-written provider or a
+    ``base_url`` override pointed at the gateway still gets the headers.  The host
+    is taken with :mod:`urllib.parse` (ports and paths do not matter), and
+    ``notopencode.ai`` is not this provider.
+    """
+    if provider.kind == "opencode":
+        return True
+    host = provider.host().rstrip(".").lower()
+    return host == OPENCODE_HOST or host.endswith(f".{OPENCODE_HOST}")
+
+
 class AIClient:
     """Speaks to one configured provider."""
 
@@ -143,6 +176,7 @@ class AIClient:
         retries: int | None = None,
         retry_backoff_s: float = 0.5,
         timeout_s: float | None = None,
+        session_id: str | None = None,
     ) -> None:
         self.provider = provider.validated()
         self.local_only = local_only
@@ -154,6 +188,13 @@ class AIClient:
         self._opener = opener
         self.calls = 0
         """Successful HTTP round trips (used by tests and the cost meter)."""
+        self.session_id = session_id or uuid.uuid4().hex
+        """One id per conversation, sent to OpenCode Zen as ``x-opencode-session``.
+
+        Zen routes (and prompt-caches) on it: stable for this client's lifetime -
+        every request in a conversation carries the same value - and new for the
+        next client.  Injectable so a test can pin it.
+        """
 
     # -- public API --------------------------------------------------------- #
 
@@ -230,6 +271,12 @@ class AIClient:
         key = self.provider.api_key(self.env)
         if key:
             headers["Authorization"] = f"Bearer {key}"
+        if is_opencode_endpoint(self.provider):
+            # Zen announced (2026-09-03) that calls without the session header may
+            # be refused, and uses it to route and to match the prompt cache: sent
+            # before the provider's own headers, so a configured value still wins.
+            headers[OPENCODE_SESSION_HEADER] = self.session_id
+            headers[OPENCODE_CLIENT_HEADER] = OPENCODE_CLIENT
         headers.update(self.provider.extra_headers)
         return headers
 

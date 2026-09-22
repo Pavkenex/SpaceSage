@@ -24,7 +24,7 @@ No chat surface: output renders next to the items it concerns (design.md §9).
 ## Provider setup
 
 The client speaks one protocol — the OpenAI-compatible API over stdlib `urllib`,
-no SDK — so anything that speaks it works. Five presets fill in the defaults:
+no SDK — so anything that speaks it works. Six presets fill in the defaults:
 
 | preset | base URL | default model | key | local |
 |---|---|---|---|---|
@@ -32,10 +32,40 @@ no SDK — so anything that speaks it works. Five presets fill in the defaults:
 | `lmstudio` | `http://localhost:1234/v1` | `local-model` | — | yes |
 | `openai` | `https://api.openai.com/v1` | `gpt-4o-mini` | `OPENAI_API_KEY` | no |
 | `openrouter` | `https://openrouter.ai/api/v1` | `openai/gpt-4o-mini` | `OPENROUTER_API_KEY` | no |
+| `opencode` | `https://opencode.ai/zen/v1` | `deepseek-v4-flash` | `OPENCODE_API_KEY` | no |
 | `custom` | (you set it) | (you set it) | `SPACESAGE_AI_API_KEY` | no |
 
-Local presets need no key; `openai` carries prices; `custom` covers vLLM,
-llama.cpp and gateways.
+Local presets need no key; `openai` carries prices; the two gateways
+(`openrouter`, `opencode`) price per model; `custom` covers vLLM, llama.cpp and
+anything else.
+
+### OpenCode Zen
+
+`opencode` points at the OpenCode Zen gateway, which speaks the same
+`/chat/completions` protocol as everything else here. Pick a chat/completions
+model (`deepseek-v4-flash` is the preset default; the gateway's GPT, Claude,
+Grok and Muse models use the `/responses` transport instead, which SpaceSage does
+not speak). The key is read from `OPENCODE_API_KEY` — `api_key_env` can name any
+other variable, and no key is ever stored in `ai.toml`.
+
+OpenCode requires a routing header on every call: `x-opencode-session` (a stable
+id per conversation, used for routing and prompt-cache matching) — since
+2026-09-03 requests without it may be refused. SpaceSage sends it, plus
+`x-opencode-client: spacesage`, automatically on every request to `opencode.ai` —
+the `/chat/completions` calls, the `/models` listing behind *Test connection*,
+`spacesage ai models` and `spacesage ai check` alike — whether the provider uses
+the `opencode` preset, names `kind = "opencode"` itself, or merely points
+`base_url` at the gateway. The id is generated once per client (one engine
+session = one conversation) and never leaves except as that header. A provider's
+own headers still win:
+
+```toml
+[[ai.providers]]
+name = "zen"
+preset = "opencode"
+model = "deepseek-v4-flash"
+extra_headers.x-opencode-session = "your-own-session-id"   # overrides the default
+```
 
 ### The config file
 
@@ -155,7 +185,8 @@ total.
 
 **Prices** are per provider, in USD per 1M tokens: `pricing_in` (prompt),
 `pricing_out` (completion). Without them cost shows as `unknown`, never a wrong
-number (`openai` carries its own; `openrouter`'s depends on the routed model).
+number (`openai` carries its own; `openrouter`'s and `opencode`'s depend on the
+model you route to).
 
 **Bounds.** `batch_size` (items per request, default 8, range 1–64),
 `max_prompt_chars` (a request's data block, default 24 000 — a batch splits
@@ -251,9 +282,9 @@ a suggestion, an annotation or a rule proposal that a human accepts.
   own action ids and shows a summary card; an annotation can be taken out of the plan,
   but a plan's action list is only ever written by the rule engine.
 - **Settings** owns the provider list (add / edit / remove, presets for ollama, lmstudio,
-  openai, openrouter and a custom endpoint), *Test connection* (the models the endpoint
-  offers and the latency), the default provider, and the three switches that decide what
-  leaves the machine: `redact_paths`, local-only and streaming.
+  openai, openrouter, opencode and a custom endpoint), *Test connection* (the models the
+  endpoint offers and the latency), the default provider, and the three switches that decide
+  what leaves the machine: `redact_paths`, local-only and streaming.
 - **Status bar** carries one line about the layer — "AI off", "AI not ready: …" or the
   provider and model — and the session cost meter (tokens and estimated cost) once the
   AI is on.

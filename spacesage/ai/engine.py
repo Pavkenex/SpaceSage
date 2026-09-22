@@ -270,6 +270,8 @@ class AIEngine:
                 sleep=self._sleep,
                 opener=self._opener,
                 retries=self._retries,
+                # the same conversation: one routing id for this provider's calls
+                session_id=client.session_id,
             )
         return client.models()
 

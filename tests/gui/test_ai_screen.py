@@ -753,6 +753,14 @@ def test_settings_shows_the_layer_and_can_add_and_test_a_provider(
     assert page.current_provider_name() == "stub"
     assert ai_window.ai().config().provider_names() == ("stub",)
 
+    # OpenCode Zen is offered like every other preset, and adds the gateway's URL.
+    labels = [action.text() for action in page.add_button.menu().actions()]
+    assert "OpenCode Zen" in labels
+    assert page.add_provider("opencode") is True
+    assert page.base_url.text() == "https://opencode.ai/zen/v1"
+    page.remove_button.click()
+    assert ai_window.ai().config().provider_names() == ("stub",)
+
 
 def test_the_policy_switches_write_the_file_the_engine_reads(
     ai_window: Any, ai_stub: StubServer

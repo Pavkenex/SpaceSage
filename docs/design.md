@@ -670,7 +670,7 @@ Verdict (details in [`research/ai-and-alternatives.md`](research/ai-and-alternat
 4. `review` — scans a plan for overlooked risks; severity-tagged annotations attached to plan items.
 5. `summarize` — optional plain-language summary of the plan.
 
-**Engineering:** OpenAI-compatible `/chat/completions` (stdlib `urllib`) with **SSE streaming**; `/models` listing for the model picker; **multiple providers configured side-by-side** (name, base URL, key env var, model) with presets for ollama / lmstudio / openai / openrouter / custom; retries with backoff; actionable error taxonomy. No conversation store — the product is not conversational.
+**Engineering:** OpenAI-compatible `/chat/completions` (stdlib `urllib`) with **SSE streaming**; `/models` listing for the model picker; **multiple providers configured side-by-side** (name, base URL, key env var, model) with presets for ollama / lmstudio / openai / openrouter / opencode / custom; retries with backoff; actionable error taxonomy. No conversation store — the product is not conversational.
 
 **Guardrails:** JSON-schema validation with one repair retry; dataset locking (every referenced path must exist in the index — hallucinated paths rejected); prompt-injection-resistant wrapping (filenames are data); response cache keyed by content hash; token/cost meter (visible in the UI when AI is on; batch runs show an estimate first); `redact_paths` mode; **local-only mode** (block non-loopback endpoints); off until configured; graceful degradation to deterministic output.
 
