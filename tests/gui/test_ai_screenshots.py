@@ -117,15 +117,25 @@ def _visible_toasts(window: Any) -> list[Any]:
     return [toast for toast in window.findChildren(widgets.Toast) if toast.isVisible()]
 
 
-def assert_in_view(pane: Any, card: Any) -> None:
+def card_in_view(pane: Any, card: Any) -> bool:
+    """Whether the card sits inside the pane's viewport right now."""
+    top = card.mapTo(pane.widget(), QPoint(0, 0)).y() - pane.verticalScrollBar().value()
+    return -theme.SPACE["md"] <= top < pane.viewport().height()
+
+
+def assert_in_view(pane: Any, card: Any, qtbot: object) -> None:
     """Prove a card is on screen -- the pane is a scroll area and the AI sits low in it.
 
     A render that shows the reasoning but not the answer would be evidence of the
-    wrong thing, so the screenshots assert the card is actually in view.
+    wrong thing, so the screenshots assert the card is actually in view.  The
+    pane scrolls to the card when the answer lands, so wait for that scroll to
+    land -- a slow runner can still be mid-scroll, and a fixed delay would race
+    it.  The wait is bounded: an app that never scrolls still fails the run.
     """
     assert card is not None and card.isVisible(), "the card was not built"
+    qtbot.waitUntil(lambda: card_in_view(pane, card), timeout=5_000)  # type: ignore[attr-defined]
     top = card.mapTo(pane.widget(), QPoint(0, 0)).y() - pane.verticalScrollBar().value()
-    assert -theme.SPACE["md"] <= top < pane.viewport().height(), (
+    assert card_in_view(pane, card), (
         f"the card is not in view (top={top}, viewport={pane.viewport().height()})"
     )
 
@@ -169,7 +179,7 @@ def test_suggestions_filled_screenshot(
     assert pane.ai_entry() is not None, "the pane shows the answer for the row on screen"
     # The card is the point of the render: prove it is actually in view, not below
     # the fold (the pane scrolls to it when the answer arrives).
-    assert_in_view(pane, pane.ai_card())
+    assert_in_view(pane, pane.ai_card(), qtbot)
     qtbot.wait(260)  # type: ignore[attr-defined]
     assert grab_png(ai_window, artifacts / "suggestions_filled.png").is_file()
 
@@ -200,7 +210,7 @@ def test_explain_screenshot(
     assert "Risks:" in pane.explanation_text() and "Alternatives:" in pane.explanation_text()
     assert not pane.explanation_failed()
     assert "stub / stub-model" in pane.explanation_stage()
-    assert_in_view(pane, pane.explanation_card())
+    assert_in_view(pane, pane.explanation_card(), qtbot)
     qtbot.wait(260)  # type: ignore[attr-defined]
     assert grab_png(ai_window, artifacts / "explain.png").is_file()
 
