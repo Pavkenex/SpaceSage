@@ -10,6 +10,8 @@ not understand.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-22
+
 ### Added
 
 - **OpenCode Zen preset**: the provider list offers OpenCode Zen
