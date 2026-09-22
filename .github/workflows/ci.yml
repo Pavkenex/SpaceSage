@@ -140,6 +140,7 @@ jobs:
             grep -inE 'fatal|abort|INTERNALERROR' pytest-output.txt | tail -1 || true
             tail -2 pytest-output.txt || true
           } | head -10 | sed 's/^/::error::/'
+          grep -E '^(FAILED|ERROR) ' pytest-output.txt | tail -n +7 | head -8 | sed 's/^/::warning::/' || true
 
   # The acceptance pass (S12): one planted "full disk" driven through every
   # engine stage and through the app itself, out of process, the way a user and
@@ -196,6 +197,7 @@ jobs:
             grep -inE 'fatal|abort|INTERNALERROR' pytest-output.txt | tail -1 || true
             tail -2 pytest-output.txt || true
           } | head -10 | sed 's/^/::error::/'
+          grep -E '^(FAILED|ERROR) ' pytest-output.txt | tail -n +7 | head -8 | sed 's/^/::warning::/' || true
       - name: Upload the evidence
         # Evidence is most valuable exactly when the pass failed, so it goes up
         # either way.

@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import ntpath
 import os
+import posixpath
 import re
 import stat
 from collections.abc import Mapping
@@ -349,9 +350,11 @@ def join_path(base: str, *parts: str) -> str:
         for part in parts:
             result = ntpath.join(result, part)
         return result
+    # POSIX-shaped bases join with POSIX rules on every host: os.path.join
+    # would be ntpath on Windows and mix the separators in "/mnt/q".
     result = base.rstrip("/")
     for part in parts:
-        result = os.path.join(result or "/", part)
+        result = posixpath.join(result or "/", part)
     return result or "/"
 
 
@@ -361,8 +364,10 @@ def is_under(path: str, root: str) -> bool:
         subject = ntpath.normcase(ntpath.normpath(path)).replace("/", "\\")
         base = ntpath.normcase(ntpath.normpath(root)).replace("/", "\\").rstrip("\\")
         return subject == base or subject.startswith(base + "\\")
-    subject = os.path.normpath(path)
-    base = os.path.normpath(root).rstrip("/")
+    # POSIX-shaped paths get POSIX rules on every host (os.path would be
+    # ntpath on Windows and stop recognising "/mnt/data" as a root).
+    subject = posixpath.normpath(path)
+    base = posixpath.normpath(root).rstrip("/")
     return subject == base or subject.startswith(base + "/")
 
 
@@ -395,8 +400,13 @@ def protected_reason(path: str) -> str | None:
             return f"the system directory {components[0]}"
         if len(components) == 2 and components[0].lower() in PROFILE_PARENTS:
             return f"the profile root {path}"
+        home = ntpath.expanduser("~")
+        if home != "~":
+            current = ntpath.normcase(ntpath.normpath(path))
+            if current == ntpath.normcase(ntpath.normpath(home)):
+                return "the home directory"
         return _quarantine_reason(components)
-    if not os.path.isabs(path):
+    if not posixpath.isabs(path):
         return "the path is not absolute"
     components = path_components(path)
     if not components:
@@ -405,8 +415,8 @@ def protected_reason(path: str) -> str | None:
         return f"the system directory /{components[0]}"
     if len(components) == 2 and components[0] in PROFILE_PARENTS:
         return f"the profile root {path}"
-    home = os.path.expanduser("~")
-    if home != "~" and os.path.normpath(path) == os.path.normpath(home):
+    home = posixpath.expanduser("~")
+    if home != "~" and posixpath.normpath(path) == posixpath.normpath(home):
         return "the home directory"
     return _quarantine_reason(components)
 

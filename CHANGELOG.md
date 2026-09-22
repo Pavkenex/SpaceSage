@@ -23,7 +23,12 @@ not understand.
 - **Hard-link detection works on Windows**: the scan reads the file identity
   from a following stat, because the no-follow stat there reports no file
   index -- hard-linked twins are detected as one physical copy, not as
-  reclaimable duplicates.
+  reclaimable duplicates, and their link count now reads from the same stat
+  (the no-follow one says 1 there).
+- **The executor honours the path style it is given, on every host**: POSIX-shaped
+  paths are joined, rooted and judged with POSIX rules even when the host is
+  Windows (which silently mangled "/mnt/q" before), and the Windows branch now
+  refuses the home directory itself like the POSIX one does.
 
 ## [0.1.0] - 2026-09-13
 

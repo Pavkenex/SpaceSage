@@ -424,9 +424,14 @@ def test_dry_run_resolves_quarantine_into_the_plan_token(tmp_path: Path) -> None
     step = report.ops[0].steps[0]
     token = backend.plan_token(result.plan_id)
     assert step.op == "quarantine" and step.outcome == "planned"
-    assert step.dest == str(
-        result.quarantine / token / result.root.as_posix().lstrip("/") / "cache"
+    # Built with the same helpers the executor uses: the destination is a
+    # path-style question (a Windows volume becomes the first component), so
+    # string-slicing a POSIX path would only hold on a POSIX host.
+    payload = result.root / "cache"
+    expected = backend.join_path(
+        str(result.quarantine), token, *backend.quarantine_relative(str(payload))
     )
+    assert step.dest == expected
 
 
 def test_dry_run_resolves_a_move_and_its_link(tmp_path: Path) -> None:

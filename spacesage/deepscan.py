@@ -681,6 +681,8 @@ class _Scanner:
             # non-reparse path it describes the same file the no-follow stat
             # just did, and on Windows only a handle-based stat reports the
             # file index at all -- which is what hard-link detection feeds on.
+            # The link count rides the same stat for the same reason: the
+            # no-follow stat says 1 for hard-linked files on Windows.
             try:
                 identity = os.stat(entry.path)
             except OSError:
@@ -693,7 +695,7 @@ class _Scanner:
                     mtime_ns=info.st_mtime_ns,
                     dev=_int_or_none(getattr(identity, "st_dev", None)),
                     ino=_int_or_none(getattr(identity, "st_ino", None)),
-                    links=int(getattr(info, "st_nlink", 1) or 1),
+                    links=int(getattr(identity, "st_nlink", 1) or 1),
                 )
             )
         if self.files % _PROGRESS_FILES == 0:

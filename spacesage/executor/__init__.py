@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 import re
 import time
 from collections.abc import Mapping, Sequence
@@ -459,8 +460,12 @@ def _revalidate(
 
 
 def _is_absolute(path: str) -> bool:
-    return os.path.isabs(path) or bool(
-        re.match(r"^[A-Za-z]:[\\/]", path) or path.startswith("\\\\")
+    # The style decides, not the host: a POSIX-shaped path is absolute when it
+    # is written like one, wherever the plan is being read.
+    return (
+        posixpath.isabs(path)
+        or os.path.isabs(path)
+        or bool(re.match(r"^[A-Za-z]:[\\/]", path) or path.startswith("\\\\"))
     )
 
 

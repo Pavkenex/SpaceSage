@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QGuiApplication, QImage
 from PySide6.QtWidgets import QApplication
 
 from spacesage.app import icons, state, theme
@@ -378,7 +378,17 @@ def test_capture_writes_a_real_render_of_the_window(tmp_path: Path) -> None:
 
     image = QImage(str(target))
     assert not image.isNull(), "the capture flag exited 0 without an image"
-    assert image.width() >= 1200 and image.height() >= 800
+    # The window asks for 1440x900, but a display smaller than that gets what
+    # it has: the render must fill the smaller of the design size and the
+    # screen (CI's is 1024x768) -- a small render there is the window, not a bug.
+    screen = QGuiApplication.primaryScreen()
+    allowed = screen.availableGeometry() if screen is not None else None
+    min_width = min(1200, allowed.width()) if allowed is not None else 1200
+    min_height = min(800, allowed.height()) if allowed is not None else 800
+    assert image.width() >= min_width, f"the capture is {image.width()}px wide, below {min_width}px"
+    assert image.height() >= min_height, (
+        f"the capture is {image.height()}px tall, below {min_height}px"
+    )
     colours = {
         image.pixel(x, y)
         for y in range(0, image.height(), 23)
