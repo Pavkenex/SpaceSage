@@ -132,8 +132,15 @@ jobs:
         uses: softprops/action-gh-release@v3.0.3
         with:
           generate_release_notes: true
+          # Every asset is a hard requirement: a publish that attaches nothing
+          # has to fail the run instead of passing quietly.
+          fail_on_unmatched_files: true
+          # download-artifact lands each artifact under its own directory with
+          # the workspace-relative layout upload-artifact gave it (``dist/`` for
+          # the binaries, ``artifacts/package/`` for the proof renders), so the
+          # globs match wherever that layout puts the files.
           files: |
-            artifacts/spacesage-windows-x86_64/spacesage.exe
-            artifacts/spacesage-windows-x86_64/smoke-windows.png
-            artifacts/spacesage-linux-x86_64/spacesage-linux-x86_64.tar.gz
-            artifacts/spacesage-linux-x86_64/smoke-linux.png
+            artifacts/**/spacesage.exe
+            artifacts/**/smoke-windows.png
+            artifacts/**/spacesage-linux-x86_64.tar.gz
+            artifacts/**/smoke-linux.png
