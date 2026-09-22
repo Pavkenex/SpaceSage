@@ -253,6 +253,11 @@ jobs:
   # NATIVE platform (the offscreen plugin does not rasterize text on Windows),
   # and every number lands in the run's annotations -- exit codes and PNG sizes
   # are readable without the login-walled logs.
+  #
+  # PowerShell does NOT wait for a GUI-subsystem exe: a bare invocation returns
+  # before the app has written anything, so every call here goes through
+  # `2>&1 | Out-String`, which forces the wait and keeps the exe's own line
+  # ("captured <path> (WxH)").
   package-windows:
     name: package (windows smoke build)
     runs-on: windows-latest
@@ -270,27 +275,25 @@ jobs:
           --noconfirm --distpath dist --workpath build/pyinstaller
       - name: The exe starts under both platforms
         run: |
-          & dist\spacesage.exe --self-check
-          echo "::notice::self-check offscreen exit=$LASTEXITCODE"
+          $offs = (& dist\spacesage.exe --self-check 2>&1 | Out-String).Trim()
+          echo "::notice::self-check offscreen exit=$LASTEXITCODE report=[$offs]"
           $env:QT_QPA_PLATFORM = "windows"
-          $direct = (& dist\spacesage.exe --self-check 2>&1 | Out-String).Trim()
-          $code = $LASTEXITCODE
-          cmd /c "dist\spacesage.exe --self-check > selfcheck-native.txt 2>&1"
-          $file = ((Get-Content selfcheck-native.txt -Raw) -replace "\r?\n", " | ").Trim()
-          echo "::notice::self-check native exit=$code direct=[$direct] file=[$file]"
+          $native = (& dist\spacesage.exe --self-check 2>&1 | Out-String).Trim()
+          echo "::notice::self-check native exit=$LASTEXITCODE report=[$native]"
       - name: The exe renders under both platforms
         env:
           SPACESAGE_DATA_DIR: ${{ runner.temp }}\spacesage-smoke
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
-          & dist\spacesage.exe --capture artifacts\package\smoke-offs.png --capture-delay 1000
+          $offs = (& dist\spacesage.exe --capture artifacts\package\smoke-offs.png --capture-delay 1000 2>&1 | Out-String).Trim()
           $offsCode = $LASTEXITCODE
           $offsSize = if (Test-Path artifacts\package\smoke-offs.png) { (Get-Item artifacts\package\smoke-offs.png).Length } else { -1 }
           $env:QT_QPA_PLATFORM = "windows"
-          & dist\spacesage.exe --capture artifacts\package\smoke-win.png --capture-delay 1500
+          $native = (& dist\spacesage.exe --capture artifacts\package\smoke-win.png --capture-delay 1500 2>&1 | Out-String).Trim()
           $winCode = $LASTEXITCODE
           $winSize = if (Test-Path artifacts\package\smoke-win.png) { (Get-Item artifacts\package\smoke-win.png).Length } else { -1 }
-          echo "::notice::capture offscreen exit=$offsCode png=$offsSize native exit=$winCode png=$winSize"
+          echo "::notice::capture offscreen exit=$offsCode png=$offsSize out=[$offs]"
+          echo "::notice::capture native exit=$winCode png=$winSize out=[$native]"
           if ($winCode -ne 0) { throw "the native capture exited $winCode" }
           if ($winSize -lt 20000) { throw "the native render is too small to contain text ($winSize bytes)" }
       - name: Any crash report the exe left behind
