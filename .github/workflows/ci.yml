@@ -94,20 +94,45 @@ jobs:
         # instead of running on every matrix leg.
         #
         # The output is kept in a file so the next step can raise the failing
-        # tests as annotations: a red run has to say what failed.
+        # tests as annotations: a red run has to say what failed.  The exit
+        # code lands in the file too -- a run that dies without its final
+        # summary (a native crash, not a pytest verdict) tells a different
+        # story from a run whose tests failed, and both are in here.
         shell: bash
         run: |
           set -o pipefail
           uv run --frozen pytest --ignore=tests/e2e -rs 2>&1 | tee pytest-output.txt
+          code=$?
+          printf 'PYTEST EXIT CODE: %s\n' "$code" >> pytest-output.txt
+          exit "$code"
       - name: Annotate the failures
+        # GitHub caps each annotation level at ten per step, so the errors go
+        # most-telling-first.  The step summary carries the long form: without
+        # it the runner's fatal message and the interpreter die with the log,
+        # and a red run has to say *why*.
         if: failure()
         shell: bash
         run: |
           uv run --frozen python -VV | sed 's/^/::notice::/' || true
-          grep -E '^SKIPPED' pytest-output.txt | head -20 | sed 's/^/::notice::/' || true
-          lines="$(grep -E '^(FAILED|ERROR) ' pytest-output.txt | head -40 || true)"
-          if [ -z "$lines" ]; then lines="$(tail -20 pytest-output.txt || true)"; fi
-          printf '%s\n' "$lines" | sed 's/^/::error::/'
+          grep -E '^SKIPPED' pytest-output.txt | head -9 | sed 's/^/::notice::/' || true
+          {
+            echo "### pytest diagnostics"
+            echo '```'
+            uv run --frozen python -VV || true
+            grep -E '^PYTEST EXIT CODE' pytest-output.txt || true
+            grep -E '^=+ .*(passed|failed|error|no tests)' pytest-output.txt | tail -2 || true
+            grep -inE 'fatal|abort|INTERNALERROR|traceback' pytest-output.txt | tail -8 || true
+            echo '--- last 30 lines ---'
+            tail -30 pytest-output.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          {
+            grep -E '^PYTEST EXIT CODE' pytest-output.txt || true
+            grep -E '^=+ .*(passed|failed|error|no tests)' pytest-output.txt | tail -1 || true
+            grep -inE 'fatal|abort|INTERNALERROR' pytest-output.txt | tail -3 || true
+            grep -E '^(FAILED|ERROR) ' pytest-output.txt | head -4 || true
+            tail -2 pytest-output.txt || true
+          } | head -10 | sed 's/^/::error::/'
 
   # The acceptance pass (S12): one planted "full disk" driven through every
   # engine stage and through the app itself, out of process, the way a user and
@@ -134,15 +159,35 @@ jobs:
         run: |
           set -o pipefail
           uv run --frozen pytest tests/e2e -q -rs 2>&1 | tee pytest-output.txt
+          code=$?
+          printf 'PYTEST EXIT CODE: %s\n' "$code" >> pytest-output.txt
+          exit "$code"
       - name: Annotate the failures
+        # Same shape as the matrix legs: the step summary carries the long
+        # form, the annotations carry the first ten most-telling lines.
         if: failure()
         shell: bash
         run: |
           uv run --frozen python -VV | sed 's/^/::notice::/' || true
-          grep -E '^SKIPPED' pytest-output.txt | head -20 | sed 's/^/::notice::/' || true
-          lines="$(grep -E '^(FAILED|ERROR) ' pytest-output.txt | head -40 || true)"
-          if [ -z "$lines" ]; then lines="$(tail -20 pytest-output.txt || true)"; fi
-          printf '%s\n' "$lines" | sed 's/^/::error::/'
+          grep -E '^SKIPPED' pytest-output.txt | head -9 | sed 's/^/::notice::/' || true
+          {
+            echo "### acceptance-pass diagnostics"
+            echo '```'
+            uv run --frozen python -VV || true
+            grep -E '^PYTEST EXIT CODE' pytest-output.txt || true
+            grep -E '^=+ .*(passed|failed|error|no tests)' pytest-output.txt | tail -2 || true
+            grep -inE 'fatal|abort|INTERNALERROR|traceback' pytest-output.txt | tail -8 || true
+            echo '--- last 30 lines ---'
+            tail -30 pytest-output.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          {
+            grep -E '^PYTEST EXIT CODE' pytest-output.txt || true
+            grep -E '^=+ .*(passed|failed|error|no tests)' pytest-output.txt | tail -1 || true
+            grep -inE 'fatal|abort|INTERNALERROR' pytest-output.txt | tail -3 || true
+            grep -E '^(FAILED|ERROR) ' pytest-output.txt | head -4 || true
+            tail -2 pytest-output.txt || true
+          } | head -10 | sed 's/^/::error::/'
       - name: Upload the evidence
         # Evidence is most valuable exactly when the pass failed, so it goes up
         # either way.
