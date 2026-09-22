@@ -210,8 +210,9 @@ jobs:
 
   # The packaging smoke build: the spec has to keep working, so it is built and
   # *run* on every push -- a bundle that starts, renders its window and proves it
-  # with a PNG is the only evidence that counts.  Windows packaging happens in the
-  # release workflow (a tag), where the .exe is attached to the release.
+  # with a PNG is the only evidence that counts.  Both platforms are covered:
+  # linux here, windows in its own job below (the release workflow builds the
+  # same pair again, from the tag).
   package:
     name: package (linux smoke build)
     runs-on: ubuntu-latest
@@ -245,3 +246,73 @@ jobs:
             dist/spacesage
             artifacts/package/smoke.png
           if-no-files-found: error
+
+  # The same proof for the exe: a --windowed one-file build that cannot start or
+  # render on the platform it ships for is a broken release artifact, and a tag
+  # is too late and too rare a place to find that out.  The render runs on the
+  # NATIVE platform (the offscreen plugin does not rasterize text on Windows),
+  # and every number lands in the run's annotations -- exit codes and PNG sizes
+  # are readable without the login-walled logs.
+  package-windows:
+    name: package (windows smoke build)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+      - name: Install the project and PyInstaller
+        run: uv sync --frozen --extra build
+      - name: Build the windowed single file
+        run: >-
+          uv run --frozen --extra build pyinstaller packaging/spacesage.spec
+          --noconfirm --distpath dist --workpath build/pyinstaller
+      - name: The exe starts under both platforms
+        run: |
+          & dist\spacesage.exe --self-check
+          echo "::notice::self-check offscreen exit=$LASTEXITCODE"
+          $env:QT_QPA_PLATFORM = "windows"
+          $direct = (& dist\spacesage.exe --self-check 2>&1 | Out-String).Trim()
+          $code = $LASTEXITCODE
+          cmd /c "dist\spacesage.exe --self-check > selfcheck-native.txt 2>&1"
+          $file = ((Get-Content selfcheck-native.txt -Raw) -replace "\r?\n", " | ").Trim()
+          echo "::notice::self-check native exit=$code direct=[$direct] file=[$file]"
+      - name: The exe renders under both platforms
+        env:
+          SPACESAGE_DATA_DIR: ${{ runner.temp }}\spacesage-smoke
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          & dist\spacesage.exe --capture artifacts\package\smoke-offs.png --capture-delay 1000
+          $offsCode = $LASTEXITCODE
+          $offsSize = if (Test-Path artifacts\package\smoke-offs.png) { (Get-Item artifacts\package\smoke-offs.png).Length } else { -1 }
+          $env:QT_QPA_PLATFORM = "windows"
+          & dist\spacesage.exe --capture artifacts\package\smoke-win.png --capture-delay 1500
+          $winCode = $LASTEXITCODE
+          $winSize = if (Test-Path artifacts\package\smoke-win.png) { (Get-Item artifacts\package\smoke-win.png).Length } else { -1 }
+          echo "::notice::capture offscreen exit=$offsCode png=$offsSize native exit=$winCode png=$winSize"
+          if ($winCode -ne 0) { throw "the native capture exited $winCode" }
+          if ($winSize -lt 20000) { throw "the native render is too small to contain text ($winSize bytes)" }
+      - name: Any crash report the exe left behind
+        if: failure()
+        run: |
+          $dir = "${{ runner.temp }}\spacesage-smoke\logs"
+          if (Test-Path $dir) {
+            Get-ChildItem $dir -Filter crash-*.log | Sort-Object LastWriteTime | Select-Object -Last 1 |
+              ForEach-Object {
+                echo "::warning::crash log $($_.Name):"
+                Get-Content $_.FullName | Select-Object -First 2 | ForEach-Object { echo "::warning::$_" }
+                Get-Content $_.FullName -Tail 15 | ForEach-Object { echo "::warning::$_" }
+              }
+          } else {
+            echo "::warning::no crash-log directory at $dir"
+          }
+      - name: Upload the exe and both renders
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: spacesage-windows-smoke
+          path: |
+            artifacts/package/smoke-offs.png
+            artifacts/package/smoke-win.png
+          if-no-files-found: warn

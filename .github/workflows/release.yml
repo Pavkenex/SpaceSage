@@ -63,22 +63,41 @@ jobs:
         run: >-
           uv run --frozen --extra build pyinstaller packaging/spacesage.spec
           --noconfirm --distpath dist --workpath build/pyinstaller
-      - name: The exe starts and reports its Qt platform and font
+      - name: The exe starts on the native platform and reports its font
         env:
           QT_QPA_PLATFORM: "windows"
         run: |
-          $report = dist\spacesage.exe --self-check
-          Write-Host $report
-          echo "::notice::self-check $report"
+          $direct = (& dist\spacesage.exe --self-check 2>&1 | Out-String).Trim()
+          $code = $LASTEXITCODE
+          cmd /c "dist\spacesage.exe --self-check > selfcheck-native.txt 2>&1"
+          $file = ((Get-Content selfcheck-native.txt -Raw) -replace "\r?\n", " | ").Trim()
+          echo "::notice::self-check native exit=$code direct=[$direct] file=[$file]"
+          if ($code -ne 0) { throw "the exe cannot start on the native platform (exit $code)" }
       - name: The exe renders its window on the native platform
         env:
           QT_QPA_PLATFORM: "windows"
           SPACESAGE_DATA_DIR: ${{ runner.temp }}\spacesage-smoke
         run: |
-          dist\spacesage.exe --capture artifacts\package\smoke-windows.png --capture-delay 1500
-          $size = (Get-Item artifacts\package\smoke-windows.png).Length
-          Write-Host "smoke-windows.png: $size bytes"
+          & dist\spacesage.exe --capture artifacts\package\smoke-windows.png --capture-delay 1500
+          $code = $LASTEXITCODE
+          $size = if (Test-Path artifacts\package\smoke-windows.png) { (Get-Item artifacts\package\smoke-windows.png).Length } else { -1 }
+          echo "::notice::capture native exit=$code png=$size bytes"
+          if ($code -ne 0) { throw "the native capture exited $code" }
           if ($size -lt 20000) { throw "the render is too small to contain text ($size bytes)" }
+      - name: Any crash report the exe left behind
+        if: failure()
+        run: |
+          $dir = "${{ runner.temp }}\spacesage-smoke\logs"
+          if (Test-Path $dir) {
+            Get-ChildItem $dir -Filter crash-*.log | Sort-Object LastWriteTime | Select-Object -Last 1 |
+              ForEach-Object {
+                echo "::warning::crash log $($_.Name):"
+                Get-Content $_.FullName | Select-Object -First 2 | ForEach-Object { echo "::warning::$_" }
+                Get-Content $_.FullName -Tail 15 | ForEach-Object { echo "::warning::$_" }
+              }
+          } else {
+            echo "::warning::no crash-log directory at $dir"
+          }
       - name: Upload the exe and its proof
         uses: actions/upload-artifact@v7.0.1
         with:
