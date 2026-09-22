@@ -274,8 +274,9 @@ decisions that became part of the engine:
   regex runs. A 284k-entry synthetic index (262k files / 22k dirs, deep random
   tree) classifies in ~4 s (≈69k entries/s) and materialises in ~9 s.
 - **CLI.** `spacesage classify [--db PATH] [--rules DIR] [--list-rules]
-  [--top N] [--json] [--materialize]`; `--list-rules` prints the effective
-  order (no index needed), the report covers matched/unknown totals, T1/T2/T3
+  [--top N] [--now WHEN] [--json] [--materialize]`; `--list-rules` prints the
+  effective order (no index needed), the report covers matched/unknown totals,
+  T1/T2/T3
   roll-ups, per-category sizes and the biggest unknown entries (the rule-author
   worklist).
 
@@ -348,8 +349,8 @@ the factors behind its rank.  The decisions that became part of the engine:
   instead of pretending they were suppressed.
 - **CLI.**  `spacesage candidates [--db PATH] [--rules DIR] [--kind KIND]…
   [--min-size SIZE] [--top N] [--stale-after-days N] [--dupes-min-copies N]
-  [--json]`; `--kind` limits which kinds are *generated*, so the omitted kinds
-  cannot claim paths from the listed ones.
+  [--now WHEN] [--json]`; `--kind` limits which kinds are *generated*, so the
+  omitted kinds cannot claim paths from the listed ones.
 
 ### 6.3 Deep scan — verified duplicates (S6 findings)
 
@@ -448,8 +449,9 @@ decisions that became part of the contract:
   `{schema, source, actions}` (sorted keys, no whitespace) — the wall-clock
   `created` and the `provenance` block stay outside it, so re-planning the same
   index, rules, targets and reference time reproduces the id exactly (the
-  committed golden pins one). Action ids are positional (`a1`, `a2`, … in plan
-  order) over a deterministic order, so they are stable for the same inputs;
+  committed golden pins one; the CLI's `--now` pins one for a run). Action ids
+  are positional (`a1`, `a2`, … in plan order) over a deterministic order, so
+  they are stable for the same inputs;
   the manifest binds to the *plan id*, which changes whenever an action does.
 - **`summary`** keeps the three contract keys and adds the rest:
   `delete_bytes`, `move_bytes`, `compress_bytes` (in-place compression, upper
@@ -505,8 +507,8 @@ decisions that became part of the contract:
   confidence, why, vendor alternative). `-o FILE` writes `plan.json`.
 - **CLI.** `spacesage plan [--db PATH] [--rules DIR] [--to DRIVE]… [--reserve
   20G] [--free SIZE] [--min-size SIZE] [--top N] [--stale-after-days N]
-  [--dupes-min-copies N] [--no-links] [--json|-o FILE]`; read-only, prints the
-  Markdown summary by default.
+  [--dupes-min-copies N] [--now WHEN] [--no-links] [--json|-o FILE]`; read-only,
+  prints the Markdown summary by default.
 
 ## 8. Executor
 

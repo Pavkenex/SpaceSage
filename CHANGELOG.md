@@ -10,6 +10,19 @@ not understand.
 
 ## [Unreleased]
 
+### Added
+
+- **The CLI can pin its reference time, so a run is reproducible on any day.**
+  `classify`, `candidates` and `plan` take `--now WHEN` (ISO 8601 like
+  `2026-09-12T12:00:00Z`, or epoch seconds) -- the reference point every age and
+  recency calculation in the invocation is computed from. The engine always
+  accepted one (the plan's `provenance.as_of` records it, and `plan_id` is
+  defined against it), but the CLI could only use the wall clock: the day counts
+  inside candidate rationales changed from one day to the next, so a run could
+  not be reproduced verbatim from the command line. The same index, rules,
+  targets and `--now` now reproduce the same categories, ranks, plan and
+  `plan_id`.
+
 ### Fixed
 
 - **The Qt suites exit 0 on Python 3.11, so CI's 3.11 leg stops lying.** The
@@ -73,6 +86,15 @@ not understand.
   sizes and fails if one of them elides text it could have wrapped; five of its
   tests failed on the code before the change. The renders are regenerated and
   `docs/verification.md` says which rows take a second line.
+- **The planner's CLI-vs-engine agreement test no longer drifts with the
+  calendar.** `test_cli_json_matches_the_engine` ran the command line on the
+  wall clock and the engine on the fixture's pinned reference time
+  (2026-09-12 12:00 UTC). The two agree only while both clocks truncate to the
+  same age in whole days -- and those ages sit inside the action rationales that
+  `plan_id` hashes, so the test was green only inside the pin's first day and
+  went red once the calendar moved on (first reproduced 2026-09-22, ten days
+  after the pin). Both sides now run on the fixture's reference time through the
+  new `--now`, which the planner CLI tests exercise on every call.
 
 ## [0.1.0] - 2026-09-13
 

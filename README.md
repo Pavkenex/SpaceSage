@@ -76,8 +76,8 @@ internal CLI exposes every stage for development, CI and automation.
 uv run python -m spacesage --version
 uv run python -m spacesage ingest export.csv --db index.db   # --replace reloads, --progress reports to stderr
 uv run python -m spacesage stats --db index.db                # --by dir|ext|age|app, --top N, --json
-uv run python -m spacesage classify --db index.db             # --rules DIR, --list-rules, --top N, --json
-uv run python -m spacesage candidates --db index.db           # --kind …, --min-size 100M, --top N, --json
+uv run python -m spacesage classify --db index.db             # --rules DIR, --list-rules, --top N, --now WHEN, --json
+uv run python -m spacesage candidates --db index.db           # --kind …, --min-size 100M, --top N, --now WHEN, --json
 uv run python -m spacesage plan --db index.db --to D: --reserve 20G -o plan.json
 uv run python -m spacesage deepscan PATH... [--min-size 1M]   # live filesystem, read-only, hashes proofs
 uv run python -m spacesage apply plan.json --approve approved.json            # dry run: resolves, touches nothing

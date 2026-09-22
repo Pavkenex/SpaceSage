@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sqlite3
 import sys
 import time
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 from spacesage import (
@@ -199,6 +201,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the effective rule order (with --json: as JSON) and exit",
     )
     classify_parser.add_argument(
+        "--now",
+        type=_moment_arg,
+        default=None,
+        metavar="WHEN",
+        help=(
+            "reference time for age-based rules, ISO 8601 ('2026-09-12T12:00:00Z') "
+            "or epoch seconds; default: the wall clock. Pin it to reproduce the "
+            "classification on a later day"
+        ),
+    )
+    classify_parser.add_argument(
         "--top",
         type=int,
         default=rules.DEFAULT_TOP,
@@ -278,6 +291,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=candidates.DEFAULT_DUPES_MIN_COPIES,
         metavar="N",
         help="same-name/same-size group size that counts as duplicates; default: %(default)s",
+    )
+    candidates_parser.add_argument(
+        "--now",
+        type=_moment_arg,
+        default=None,
+        metavar="WHEN",
+        help=(
+            "reference time for age and recency calculations, ISO 8601 "
+            "('2026-09-12T12:00:00Z') or epoch seconds; default: the wall clock. "
+            "Pin it to reproduce the ranks on a later day"
+        ),
     )
     candidates_parser.add_argument(
         "--json",
@@ -366,6 +390,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=candidates.DEFAULT_DUPES_MIN_COPIES,
         metavar="N",
         help="same-name/same-size group size that counts as duplicates; default: %(default)s",
+    )
+    plan_parser.add_argument(
+        "--now",
+        type=_moment_arg,
+        default=None,
+        metavar="WHEN",
+        help=(
+            "reference time for age and recency calculations, ISO 8601 "
+            "('2026-09-12T12:00:00Z') or epoch seconds; default: the wall clock. "
+            "Pin it to reproduce the plan and its plan_id on a later day"
+        ),
     )
     plan_parser.add_argument(
         "--no-links",
@@ -493,6 +528,26 @@ def _size_arg(value: str) -> int:
         return rules.parse_size(value)
     except rules.RulesError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from None
+
+
+def _moment_arg(value: str) -> float:
+    """Parse a ``--now`` value: epoch seconds or an ISO 8601 timestamp."""
+    message = f"invalid reference time {value!r}: expected ISO 8601 or epoch seconds"
+    try:
+        seconds = float(value)
+    except ValueError:
+        seconds = None
+    if seconds is not None:
+        if not math.isfinite(seconds):
+            raise argparse.ArgumentTypeError(message)
+        return seconds
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(message) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.timestamp()
 
 
 class _DeepScanProgressPrinter:
@@ -645,9 +700,10 @@ def _run_classify(args: argparse.Namespace) -> int:
         return 1
     try:
         try:
-            # One reference point for the whole invocation: the materialised
-            # rows and the printed report must agree on age-based rules.
-            moment = time.time()
+            # One reference point for the whole invocation (--now when given,
+            # else the wall clock): the materialised rows and the printed
+            # report must agree on age-based rules.
+            moment = args.now if args.now is not None else time.time()
             if args.materialize:
                 built = rules.build_categories(conn, ruleset, now=moment)
                 print(
@@ -694,9 +750,10 @@ def _run_candidates(args: argparse.Namespace) -> int:
     try:
         selected = tuple(kind for group in (args.kind or ()) for kind in group) or candidates.KINDS
         try:
-            # One reference point for the whole invocation: age filters and the
-            # printed recency factors must agree.
-            moment = time.time()
+            # One reference point for the whole invocation (--now when given,
+            # else the wall clock): age filters and the printed recency factors
+            # must agree.
+            moment = args.now if args.now is not None else time.time()
             report = candidates.candidate_report(
                 conn,
                 ruleset,
@@ -756,9 +813,10 @@ def _run_plan(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
         try:
-            # One reference point for the whole invocation: the ranked candidates
-            # and the plan's ages must agree.
-            moment = time.time()
+            # One reference point for the whole invocation (--now when given,
+            # else the wall clock): the ranked candidates and the plan's ages
+            # must agree.
+            moment = args.now if args.now is not None else time.time()
             plan = planner.build_plan(
                 conn,
                 ruleset,

@@ -31,6 +31,8 @@ DATA_DIR = Path(__file__).resolve().parent / "fixtures" / "data"
 
 #: Reference point of the fixture and the tests (2026-09-12 12:00:00 UTC).
 NOW = int(datetime(2026, 9, 12, 12, 0, 0, tzinfo=UTC).timestamp())
+#: The same instant as the CLI's ``--now`` takes it (ISO 8601).
+NOW_ISO = datetime.fromtimestamp(NOW, tz=UTC).isoformat()
 MIB = 1024**2
 GIB = 1024**3
 
@@ -1120,7 +1122,24 @@ def test_markdown_includes_the_vendor_command_for_native_items(tmp_path: Path) -
 
 
 def plan_cli_args(db_path: Path) -> list[str]:
-    return ["plan", "--db", str(db_path), "--to", "D:", "--free", "200G", "--reserve", "20G"]
+    """Plan CLI arguments, pinned to the fixture's reference time.
+
+    ``--now`` keeps the command line on the fixture's own clock: the day counts
+    the rationales carry (and the ``plan_id`` hashes) are only stable against it.
+    """
+    return [
+        "plan",
+        "--db",
+        str(db_path),
+        "--to",
+        "D:",
+        "--free",
+        "200G",
+        "--reserve",
+        "20G",
+        "--now",
+        NOW_ISO,
+    ]
 
 
 def test_cli_prints_the_markdown_summary(tmp_path: Path) -> None:
@@ -1134,7 +1153,11 @@ def test_cli_prints_the_markdown_summary(tmp_path: Path) -> None:
 
 
 def test_cli_json_matches_the_engine(tmp_path: Path) -> None:
-    """The command line and the library agree (the fixture's ages are unambiguous)."""
+    """The command line and the library agree on the fixture's reference time.
+
+    The day counts inside the rationales are part of the action payloads
+    ``plan_id`` hashes, so both sides run on the pinned clock (``--now``).
+    """
     db_path = ingest_fixture(tmp_path)
     result = run_cli(*plan_cli_args(db_path), "--json")
     assert result.returncode == 0
@@ -1191,6 +1214,13 @@ def test_cli_rejects_an_unknown_size(tmp_path: Path) -> None:
     db_path = ingest_fixture(tmp_path)
     result = run_cli("plan", "--db", str(db_path), "--min-size", "elephant")
     assert result.returncode == 2
+
+
+def test_cli_rejects_a_bad_reference_time(tmp_path: Path) -> None:
+    db_path = ingest_fixture(tmp_path)
+    result = run_cli("plan", "--db", str(db_path), "--now", "yesterday-ish")
+    assert result.returncode == 2
+    assert "invalid reference time" in result.stderr
 
 
 # --------------------------------------------------------------------------- #
