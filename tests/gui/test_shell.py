@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QGuiApplication, QImage
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
 from spacesage.app import icons, state, theme
@@ -375,19 +376,18 @@ def test_capture_writes_a_real_render_of_the_window(tmp_path: Path) -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert f"captured {target}" in completed.stdout
+    reported = re.search(r"captured .*\((\d+)x(\d+)\)", completed.stdout)
+    assert reported, completed.stdout
+    width, height = int(reported.group(1)), int(reported.group(2))
 
     image = QImage(str(target))
     assert not image.isNull(), "the capture flag exited 0 without an image"
+    assert (image.width(), image.height()) == (width, height)
     # The window asks for 1440x900, but a display smaller than that gets what
-    # it has: the render must fill the smaller of the design size and the
-    # screen (CI's is 1024x768) -- a small render there is the window, not a bug.
-    screen = QGuiApplication.primaryScreen()
-    allowed = screen.availableGeometry() if screen is not None else None
-    min_width = min(1200, allowed.width()) if allowed is not None else 1200
-    min_height = min(800, allowed.height()) if allowed is not None else 800
-    assert image.width() >= min_width, f"the capture is {image.width()}px wide, below {min_width}px"
-    assert image.height() >= min_height, (
-        f"the capture is {image.height()}px tall, below {min_height}px"
+    # it has (CI's is 1024x768): what has to hold on any display is the
+    # window's own minimum -- and the colour count below proves the paint.
+    assert width >= 980 and height >= 620, (
+        f"the capture is {width}x{height}, below the window's 980x620 minimum"
     )
     colours = {
         image.pixel(x, y)

@@ -136,8 +136,8 @@ def test_windows_a_move_uses_robocopy_and_a_junction(tmp_path: Path) -> None:
 
     undone = executor.undo_journal(result.journal_path, backend=win.BACKEND)
     assert undone.ok(), undone.to_dict()
-    assert not source.exists()
-    assert not moved.exists()
+    assert backend.reparse_kind(str(source)) is None  # the junction is gone
+    assert not moved.exists()  # the payload is back home
     assert (result.root / "media").is_dir()  # restored as a real directory
 
 

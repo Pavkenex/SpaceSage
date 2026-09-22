@@ -782,6 +782,9 @@ def test_user_dir_resolution_honours_the_environment(
     assert rules.default_rules_dir() == tmp_path / "packs"
     monkeypatch.delenv(rules.RULES_ENV_VAR)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    if sys.platform == "win32":
+        # The Windows branch reads %APPDATA% for the same fallback.
+        monkeypatch.setenv("APPDATA", str(tmp_path / "cfg"))
     assert rules.default_rules_dir() == tmp_path / "cfg" / "spacesage" / "rules"
 
 
