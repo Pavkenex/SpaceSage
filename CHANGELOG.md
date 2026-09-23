@@ -10,6 +10,8 @@ not understand.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-09-23
+
 ### Fixed
 - The packaged app ships the built-in rule packs.  The PyInstaller spec
   bundled the icon assets but not `spacesage/rules`, so a released
