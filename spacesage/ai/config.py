@@ -547,6 +547,16 @@ class AIConfig:
 
         Raises an :class:`AIError` with a hint the UI can show verbatim.
         """
+        return self.configured(name).validated()
+
+    def configured(self, name: str | None = None) -> ProviderConfig:
+        """The named provider (default when ``None``) exactly as written.
+
+        Unlike :meth:`provider`, this does not validate: the settings screen
+        renders and edits providers the user is still filling in, so a blank
+        ``base_url`` must not be an error there.  Raises an :class:`AIError`
+        only when no provider is configured or the name is unknown.
+        """
         if not self.providers:
             raise AIError(
                 "disabled",
@@ -558,7 +568,7 @@ class AIConfig:
             chosen = self.providers[0].name
         for provider in self.providers:
             if provider.name == chosen:
-                return provider.validated()
+                return provider
         known = ", ".join(provider.name for provider in self.providers)
         raise AIError(
             "invalid_config",

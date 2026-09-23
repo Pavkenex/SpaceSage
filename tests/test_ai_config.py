@@ -42,6 +42,22 @@ def test_every_preset_is_complete_and_valid() -> None:
         assert provider.validated() is provider  # nothing to complain about
 
 
+def test_the_editor_can_read_a_provider_before_it_is_filled_in() -> None:
+    """`configured` is the raw view the settings screen edits; `provider` validates.
+
+    The blank ``custom`` preset is a legitimate configuration while the user is
+    still filling it in, so reading it back must not demand a valid base URL.
+    """
+    blank = ProviderConfig.from_preset("custom", kind="custom")
+    config = AIConfig(providers=(blank,), default_provider="custom", enabled=True)
+
+    assert config.configured("custom") is blank  # no validation, no copy
+    with pytest.raises(AIError) as caught:
+        config.provider("custom")
+    assert caught.value.code == "invalid_config"
+    assert "custom" in caught.value.message
+
+
 def test_the_opencode_preset_targets_the_zen_gateway() -> None:
     """The gateway SpaceSage sends OpenCode's routing headers to, and how to reach it."""
     preset = ai_config.PRESETS["opencode"]

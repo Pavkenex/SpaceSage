@@ -762,6 +762,34 @@ def test_settings_shows_the_layer_and_can_add_and_test_a_provider(
     assert ai_window.ai().config().provider_names() == ("stub",)
 
 
+def test_a_provider_that_is_not_filled_in_does_not_break_the_settings_card(
+    ai_window: Any, ai_stub: StubServer
+) -> None:
+    """The blank custom preset is editable, not fatal: reading it back must not validate.
+
+    A half-filled provider (no base_url yet) used to crash the whole window when
+    the card listed or reloaded it, because the editor asked for the *validated*
+    provider.  The card now reads the raw one and lets the user finish the form.
+    """
+    assert ai_window.navigate("settings")
+    page = ai_window.settings_view
+
+    assert page.add_provider("custom") is True
+    assert page.current_provider_name() == "custom"
+    assert page.base_url.text() == ""
+    assert page.model.currentText() == ""
+
+    page.refresh_ai()  # the crash point: must survive a provider with no base_url
+    assert "custom" in page.provider_combo.currentText()
+    assert ai_window.ai().config().provider_names() == ("stub", "custom")
+
+    # Editing and saving the half-filled provider is the same raw read, no validation.
+    page.base_url.setText("http://127.0.0.1:8080/v1")
+    page.save_button.click()
+    assert page.base_url.text() == "http://127.0.0.1:8080/v1"
+    assert ai_window.ai().config().configured("custom").base_url == "http://127.0.0.1:8080/v1"
+
+
 def test_the_policy_switches_write_the_file_the_engine_reads(
     ai_window: Any, ai_stub: StubServer
 ) -> None:

@@ -332,7 +332,7 @@ class SettingsView(QWidget):
         blocked = self.provider_combo.blockSignals(True)
         self.provider_combo.clear()
         for name in names:
-            self.provider_combo.addItem(f"{name} · {config.provider(name).title}", name)
+            self.provider_combo.addItem(f"{name} · {config.configured(name).title}", name)
         if current in names:
             self.provider_combo.setCurrentIndex(names.index(str(current)))
         self.provider_combo.blockSignals(blocked)
@@ -374,7 +374,7 @@ class SettingsView(QWidget):
             self.key_badge.setText("no provider")
             self.key_badge.set_tone("muted")
             return
-        provider = self._ai.config().provider(name)
+        provider = self._ai.config().configured(name)
         self.base_url.setText(provider.base_url)
         self.model.setCurrentText(provider.model)
         self.api_key_env.setText(provider.api_key_env or "")
@@ -438,7 +438,7 @@ class SettingsView(QWidget):
         name = self.current_provider_name()
         if not name:
             return False
-        provider = self._ai.config().provider(name)
+        provider = self._ai.config().configured(name)
         model = self.model.currentText().strip()
         key_env = self.api_key_env.text().strip()
         updated = ProviderConfig(
