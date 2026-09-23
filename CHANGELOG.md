@@ -10,6 +10,18 @@ not understand.
 
 ## [Unreleased]
 
+### Fixed
+- The completion ceilings leave room for models that reason before answering.
+  Every use case sent `max_tokens` sized for the answer alone (1600 for a
+  suggestion batch), so a reasoning model spent the whole budget on its
+  reasoning pass and answered nothing: OpenCode Zen's `deepseek-v4.1-flash`
+  returned empty content with `finish_reason=length` on most batches, and the
+  app reported "answered without content - check the model name", which was
+  never the problem.  A ceiling is not an allocation -- it only binds when a
+  model would otherwise be cut off mid-answer -- so the use cases now send
+  4096 (3072 for the short summary), and an answer actually cut short is coded
+  `truncated` with the real explanation instead of `bad_response`.
+
 ## [0.1.7] - 2026-09-23
 
 ### Fixed

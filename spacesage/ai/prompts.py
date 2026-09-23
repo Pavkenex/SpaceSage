@@ -464,6 +464,11 @@ _SUMMARIZE_SCHEMA: Mapping[str, Any] = {
     },
 }
 
+#: The completion ceiling each use case sends.  A ceiling is not an allocation:
+#: it only binds when a model would otherwise be cut off mid-answer, and a model
+#: that reasons before answering spends it on the reasoning pass first -- these
+#: leave that pass room instead of returning nothing (``truncated``).  The
+#: estimate's ``160 * items`` allowance is a typical answer, not the ceiling.
 USE_CASES: Mapping[str, UseCase] = {
     "suggest": UseCase(
         id="suggest",
@@ -480,7 +485,7 @@ USE_CASES: Mapping[str, UseCase] = {
         ),
         schema=_SUGGEST_SCHEMA,
         temperature=0.2,
-        max_tokens=1600,
+        max_tokens=4096,
     ),
     "classify": UseCase(
         id="classify",
@@ -496,7 +501,7 @@ USE_CASES: Mapping[str, UseCase] = {
         ),
         schema=_CLASSIFY_SCHEMA,
         temperature=0.1,
-        max_tokens=1600,
+        max_tokens=4096,
     ),
     "explain": UseCase(
         id="explain",
@@ -511,7 +516,7 @@ USE_CASES: Mapping[str, UseCase] = {
         ),
         schema=_EXPLAIN_SCHEMA,
         temperature=0.3,
-        max_tokens=1400,
+        max_tokens=4096,
     ),
     "review": UseCase(
         id="review",
@@ -527,7 +532,7 @@ USE_CASES: Mapping[str, UseCase] = {
         ),
         schema=_REVIEW_SCHEMA,
         temperature=0.2,
-        max_tokens=1400,
+        max_tokens=4096,
     ),
     "summarize": UseCase(
         id="summarize",
@@ -541,7 +546,7 @@ USE_CASES: Mapping[str, UseCase] = {
         ),
         schema=_SUMMARIZE_SCHEMA,
         temperature=0.3,
-        max_tokens=900,
+        max_tokens=3072,
     ),
 }
 

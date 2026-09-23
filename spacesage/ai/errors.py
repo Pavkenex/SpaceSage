@@ -35,6 +35,13 @@ SERVER_ERROR = "server_error"
 BAD_RESPONSE = "bad_response"
 """An answer arrived that is not an OpenAI-compatible chat completion."""
 
+TRUNCATED = "truncated"
+"""The completion hit ``max_tokens`` before the model answered (``finish_reason=length``).
+
+A model that reasons before answering spends the completion budget on the
+reasoning pass first; when that exhausts the ceiling there is no answer left.
+The ceiling is per use case (``prompts.USE_CASES``)."""
+
 SCHEMA = "schema"
 """The model's answer did not satisfy the use case's JSON schema."""
 

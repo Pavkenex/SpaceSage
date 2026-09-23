@@ -7,6 +7,7 @@ into deltas, retries only where they help, and every failure arriving as a coded
 
 from __future__ import annotations
 
+import json
 import socket
 import time
 import urllib.error
@@ -130,6 +131,66 @@ def test_a_refusal_quotes_the_providers_own_reason(ai_stub: StubServer) -> None:
     assert "free tier can only be used from within OpenCode" in error.message
     assert "STUB_API_KEY" in error.hint, "the hint still names where the key came from"
     assert "set the key" not in error.hint, "the key was set; do not tell the user to set it"
+
+
+def truncated_reply() -> StubReply:
+    """A 200 whose model spent the whole budget reasoning and answered nothing.
+
+    OpenCode Zen's reasoning models (``deepseek-v4.1-flash``) do exactly this
+    under the use cases' completion ceiling: ``finish_reason=length``, empty
+    content, the reasoning pass in ``reasoning_content``.
+    """
+    return StubReply(
+        raw=json.dumps(
+            {
+                "id": "chatcmpl-stub",
+                "object": "chat.completion",
+                "model": "stub-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "length",
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "reasoning_content": "let me think about this batch...",
+                        },
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 900,
+                    "completion_tokens": 1600,
+                    "total_tokens": 2500,
+                },
+            }
+        )
+    )
+
+
+def test_a_budget_stopped_answer_is_coded_truncated(ai_stub: StubServer) -> None:
+    """An empty answer cut by the ceiling is the model's budget, not its name."""
+    ai_stub.push(truncated_reply())
+
+    with pytest.raises(AIError) as caught:
+        client_for(ai_stub).chat((Message(role="user", content="hi"),))
+
+    error = caught.value
+    assert error.code == "truncated"
+    assert "completion tokens" in error.message
+    assert "check the model name" not in error.hint, "the model name was never the problem"
+    assert error.detail["finish_reason"] == "length"
+    assert error.detail["usage"]["completion_tokens"] == 1600
+
+
+def test_the_streamed_path_codes_the_same_budget_stop(ai_stub: StubServer) -> None:
+    """``explain`` streams; a stream cut before its first token says the same."""
+    ai_stub.push(truncated_reply())
+
+    with pytest.raises(AIError) as caught:
+        client_for(ai_stub).chat_stream((Message(role="user", content="hi"),))
+
+    assert caught.value.code == "truncated"
+    assert "completion tokens" in caught.value.message
 
 
 def test_missing_model_is_coded(ai_stub: StubServer) -> None:

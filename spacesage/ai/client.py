@@ -39,6 +39,7 @@ from spacesage.ai.errors import (
     RATE_LIMITED,
     SERVER_ERROR,
     TIMEOUT,
+    TRUNCATED,
     UNREACHABLE,
     AIError,
 )
@@ -394,11 +395,24 @@ class AIClient:
                 if on_delta is not None and text:
                     on_delta(text)
                 break
-        if not deltas and state.get("finish_reason") is None:
+        if not "".join(deltas):
+            if state.get("finish_reason") == "length":
+                raise AIError(
+                    TRUNCATED,
+                    f"{self.provider.name} ran out of completion tokens before answering",
+                    hint=(
+                        "the model spent the whole budget on a reasoning pass; "
+                        "a model that answers directly fits this budget"
+                    ),
+                    provider=self.provider.name,
+                    detail={"finish_reason": state.get("finish_reason")},
+                )
             raise AIError(
                 BAD_RESPONSE,
                 f"{self.provider.name} streamed no content",
-                hint="the model or the endpoint produced an empty answer; try `spacesage ai check`",
+                hint=(
+                    "the model or the endpoint produced an empty answer; try `spacesage ai check`"
+                ),
                 provider=self.provider.name,
             )
 
@@ -466,6 +480,17 @@ class AIClient:
     ) -> ChatResult:
         text, usage, model, finish = parse_completion_object(payload)
         if not text:
+            if finish == "length":
+                raise AIError(
+                    TRUNCATED,
+                    f"{self.provider.name} ran out of completion tokens before answering",
+                    hint=(
+                        "the model spent the whole budget on a reasoning pass; "
+                        "a model that answers directly fits this budget"
+                    ),
+                    provider=self.provider.name,
+                    detail={"finish_reason": finish, "usage": payload.get("usage")},
+                )
             raise AIError(
                 BAD_RESPONSE,
                 f"{self.provider.name} answered without content",

@@ -35,7 +35,11 @@ def test_every_use_case_is_complete_and_versioned() -> None:
         assert case.version.startswith("v")
         assert case.system and case.instructions
         assert 0.0 <= case.temperature <= 1.0
-        assert 0 < case.max_tokens <= 4096
+        # A ceiling, not an allocation: it only binds when a model would be cut
+        # off mid-answer, and a model that reasons before answering spends it on
+        # that pass first -- the small v0.1.x ceilings made every reasoning-model
+        # batch return `truncated` with nothing in it.
+        assert 2048 <= case.max_tokens <= 4096
         assert case.schema["type"] == "object"
         assert case.schema["additionalProperties"] is False
         assert case.schema["required"]
