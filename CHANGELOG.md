@@ -10,6 +10,17 @@ not understand.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-09-23
+
+### Fixed
+- The Settings screen no longer crashes on a provider that is not filled in
+  yet.  A `custom` provider is a blank template until someone sets its
+  `base_url`, but the AI card read providers through the validated accessor
+  (the one a *call* goes through), so listing or reloading such a provider
+  raised `invalid_config` and took the whole window down — the crash a user
+  hits right after adding the blank preset.  The card now reads providers
+  unvalidated; the validated door every call uses is unchanged.
+
 ## [0.1.3] - 2026-09-22
 
 ### Fixed
