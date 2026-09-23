@@ -10,6 +10,8 @@ not understand.
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-09-23
+
 ### Fixed
 - The completion ceilings leave room for models that reason before answering.
   Every use case sent `max_tokens` sized for the answer alone (1600 for a
