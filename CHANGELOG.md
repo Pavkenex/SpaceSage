@@ -10,6 +10,8 @@ not understand.
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-09-23
+
 ### Fixed
 - An auth refusal quotes the provider's own explanation.  OpenCode Zen
   refuses its free models to any client but its own with
