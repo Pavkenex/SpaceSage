@@ -505,14 +505,22 @@ class AIClient:
         detail = _error_text(exc)
         retry_after = _retry_after(exc)
         if status in {401, 403}:
-            return AIError(
-                AUTH,
-                f"{self.provider.name} rejected the credentials (HTTP {status})",
-                hint=(
+            reason = _error_message(detail)
+            hint = (
+                f"the key this call used comes from "
+                f"{self.provider.api_key_env or 'the provider key environment variable'}"
+                if reason
+                else (
                     f"set the key environment variable "
                     f"({self.provider.api_key_env or 'the provider key'}); "
                     "`spacesage ai check` names the variable it looked for"
-                ),
+                )
+            )
+            return AIError(
+                AUTH,
+                f"{self.provider.name} rejected the credentials (HTTP {status})"
+                + (f": {reason}" if reason else ""),
+                hint=hint,
                 status=status,
                 provider=self.provider.name,
                 detail={"body": detail},
@@ -828,6 +836,29 @@ def _error_text(exc: urllib.error.HTTPError) -> str:
     except Exception:  # pragma: no cover - the body is best-effort context
         return ""
     return raw.decode("utf-8", errors="replace")[:1000]
+
+
+def _error_message(body: str) -> str:
+    """The message an OpenAI-compatible error body carries, if it parses.
+
+    Providers explain refusals here -- ``401 invalid api key`` and OpenCode
+    Zen's ``403 FreeTierError: ... only be used from within OpenCode`` both
+    arrive as ``{"error": {"message": ...}}`` -- and the provider's own words
+    beat any guess this layer could make about why a key was rejected.
+    """
+    text = body.strip()
+    if not text:
+        return ""
+    try:
+        payload = json.loads(text)
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(payload, Mapping):
+        return ""
+    error = payload.get("error")
+    if isinstance(error, Mapping):
+        return str(error.get("message") or error.get("type") or "").strip()
+    return str(error).strip() if error is not None else ""
 
 
 def _retry_after(exc: urllib.error.HTTPError) -> float | None:

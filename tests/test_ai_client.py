@@ -108,6 +108,30 @@ def test_auth_failure_names_the_environment_variable(ai_stub: StubServer) -> Non
     assert "STUB_API_KEY" in error.hint
 
 
+def test_a_refusal_quotes_the_providers_own_reason(ai_stub: StubServer) -> None:
+    """A 403 body carries the real explanation; the key hint must not deny it.
+
+    OpenCode Zen's free models answer exactly this way to any client but its
+    own: the variable is set, the key is sent, and "set the key environment
+    variable" would send the user chasing the wrong thing.
+    """
+    ai_stub.queue_error(
+        403,
+        "OpenCode's free tier can only be used from within OpenCode",
+        code="FreeTierError",
+    )
+
+    with pytest.raises(AIError) as caught:
+        client_for(ai_stub, api_key_env="STUB_API_KEY").chat((Message(role="user", content="hi"),))
+
+    error = caught.value
+    assert error.code == "auth"
+    assert error.status == 403
+    assert "free tier can only be used from within OpenCode" in error.message
+    assert "STUB_API_KEY" in error.hint, "the hint still names where the key came from"
+    assert "set the key" not in error.hint, "the key was set; do not tell the user to set it"
+
+
 def test_missing_model_is_coded(ai_stub: StubServer) -> None:
     ai_stub.queue_error(404, "model 'nope' not found", code="model_not_found")
 

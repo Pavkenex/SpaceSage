@@ -10,6 +10,15 @@ not understand.
 
 ## [Unreleased]
 
+### Fixed
+- An auth refusal quotes the provider's own explanation.  OpenCode Zen
+  refuses its free models to any client but its own with
+  `403 FreeTierError: ... can only be used from within OpenCode`, while
+  *Test connection* passes (`/models` needs no key at all) -- and the app told
+  the user to "set the key environment variable" although the key was set and
+  sent.  A 401/403 error body's own message now rides in the error, and the
+  hint names where the key came from instead of asking for one.
+
 ## [0.1.6] - 2026-09-23
 
 ### Fixed
