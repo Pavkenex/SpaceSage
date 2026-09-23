@@ -230,8 +230,14 @@ jobs:
         run: >-
           uv run --frozen --extra build pyinstaller packaging/spacesage.spec
           --noconfirm --distpath dist --workpath build/pyinstaller
-      - name: The bundle starts (Qt probe through the packaged binary)
-        run: ./dist/spacesage --self-check
+      - name: The bundle starts with its built-in data (Qt probe + rule packs)
+        run: |
+          report="$(./dist/spacesage --self-check)"
+          echo "$report"
+          case "$report" in
+            *"rules "[0-9]*" packs"*) ;;
+            *) echo "::error::the bundle has no built-in rule packs"; exit 1 ;;
+          esac
       - name: The bundle renders its window
         env:
           SPACESAGE_DATA_DIR: ${{ runner.temp }}/spacesage-smoke
@@ -280,6 +286,7 @@ jobs:
           $env:QT_QPA_PLATFORM = "windows"
           $native = (& dist\spacesage.exe --self-check 2>&1 | Out-String).Trim()
           echo "::notice::self-check native exit=$LASTEXITCODE report=[$native]"
+          if ($native -notmatch 'rules \d+ packs') { throw "the exe has no built-in rule packs: $native" }
       - name: The exe renders under both platforms
         env:
           SPACESAGE_DATA_DIR: ${{ runner.temp }}\spacesage-smoke

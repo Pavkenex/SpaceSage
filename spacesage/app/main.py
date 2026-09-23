@@ -86,7 +86,11 @@ def self_check() -> int:
 
     The font line is the frozen build's honesty check: the release smoke
     prints it, so a bundle that cannot resolve a text font is visible in the
-    run's annotations instead of only in a render nobody reads.
+    run's annotations instead of only in a render nobody reads.  The rules
+    line does the same for the built-in rule packs -- data files the bundle
+    can silently omit, leaving a window that starts and an analysis that
+    always fails.  Neither report changes the exit code: this probe answers
+    "can this build run", and the smoke steps assert what it says.
     """
     try:
         from PySide6.QtCore import qVersion
@@ -102,6 +106,14 @@ def self_check() -> int:
         f"qt {qVersion()} platform {application.platformName()} "
         f"fonts {len(families)} ui {theme.resolve_family(theme.UI_FAMILIES)!r}"
     )
+    try:
+        from spacesage import rules
+
+        ruleset = rules.load_rules()
+    except Exception as exc:  # a broken pack is reported, never a crash on a probe
+        print(f"rules missing: {exc}")
+    else:
+        print(f"rules {len(ruleset.builtin_packs)} packs {len(ruleset.rules)} rules")
     return 0
 
 

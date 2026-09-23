@@ -10,6 +10,16 @@ not understand.
 
 ## [Unreleased]
 
+### Fixed
+- The packaged app ships the built-in rule packs.  The PyInstaller spec
+  bundled the icon assets but not `spacesage/rules`, so a released
+  `spacesage.exe` imported and indexed a WizTree export and then failed every
+  analysis with "built-in rule packs are missing at ...\spacesage\rules"
+  (every exe release had this; the smoke steps only ever booted the window).
+  The spec now bundles the packs, `--self-check` reports `rules N packs M
+  rules` beside the font line, and the spec test, both CI package jobs and
+  both release smoke steps fail a bundle that forgot its data.
+
 ## [0.1.5] - 2026-09-23
 
 ### Fixed

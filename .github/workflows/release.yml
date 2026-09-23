@@ -70,6 +70,7 @@ jobs:
           $native = (& dist\spacesage.exe --self-check 2>&1 | Out-String).Trim()
           echo "::notice::self-check native exit=$LASTEXITCODE report=[$native]"
           if ($LASTEXITCODE -ne 0) { throw "the exe cannot start on the native platform (exit $LASTEXITCODE)" }
+          if ($native -notmatch 'rules \d+ packs') { throw "the exe has no built-in rule packs: $native" }
       - name: The exe renders its window on the native platform
         env:
           QT_QPA_PLATFORM: "windows"
@@ -126,7 +127,12 @@ jobs:
         env:
           SPACESAGE_DATA_DIR: ${{ runner.temp }}/spacesage-smoke
         run: |
-          ./dist/spacesage --self-check
+          report="$(./dist/spacesage --self-check)"
+          echo "$report"
+          case "$report" in
+            *"rules "[0-9]*" packs"*) ;;
+            *) echo "::error::the bundle has no built-in rule packs"; exit 1 ;;
+          esac
           ./dist/spacesage --capture artifacts/package/smoke-linux.png --capture-delay 1500
           test "$(stat -c %s artifacts/package/smoke-linux.png)" -ge 20000
       - name: Bundle the binary with the license

@@ -247,6 +247,11 @@ def test_app_launches_in_a_subprocess() -> None:
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.startswith("qt ") and "platform" in completed.stdout
     assert "fonts" in completed.stdout and " ui " in completed.stdout
+    # The bundle's data honesty check: a build that forgot spacesage/rules would
+    # start and render, then fail every analysis (the released 0.1.5 exe did).
+    packs = re.search(r"rules (\d+) packs (\d+) rules", completed.stdout)
+    assert packs is not None, completed.stdout
+    assert int(packs.group(1)) > 0 and int(packs.group(2)) > 0
 
     version = subprocess.run(
         [sys.executable, "-m", "spacesage.app", "--version"],

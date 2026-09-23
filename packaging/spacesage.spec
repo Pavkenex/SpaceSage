@@ -15,7 +15,10 @@ What this file is responsible for:
   dialog (see ``spacesage.app.main.fatal``).
 * **The app's own data.**  The Lucide icon subset and the app icon are read at
   runtime through ``importlib.resources``, so they have to be in the bundle:
-  a build that forgot them would raise ``IconError`` on the first paint.
+  a build that forgot them would raise ``IconError`` on the first paint.  The
+  built-in rule packs (``spacesage/rules/*.toml``, read from
+  ``rules.BUILTIN_RULES_DIR``) are the same kind of data: a bundle without them
+  starts and imports an export, then fails every analysis.
 * **Icon and version resource.**  ``packaging/spacesage.ico`` (rendered from
   ``spacesage/app/assets/app-icon.svg`` by ``scripts/make_app_icons.py``) plus a
   version resource generated from ``spacesage.__version__`` -- both Windows
@@ -60,6 +63,7 @@ def _version_resource() -> str | None:
 
 
 ASSETS = ROOT / "spacesage" / "app" / "assets"
+BUILTIN_RULES = ROOT / "spacesage" / "rules"
 ICON = SPEC_DIR / "spacesage.ico"
 ENTRY = ROOT / "spacesage" / "app" / "__main__.py"
 
@@ -67,11 +71,17 @@ if not ICON.is_file():  # pragma: no cover - a missing icon is a build error
     raise SystemExit(
         f"{ICON} is missing; regenerate it with: uv run python scripts/make_app_icons.py"
     )
+if not BUILTIN_RULES.is_dir():  # pragma: no cover - a missing pack dir is a build error
+    raise SystemExit(f"{BUILTIN_RULES} is missing; the analysis needs its rule packs")
 
 datas = [
     (str(ASSETS / "icons"), "spacesage/app/assets/icons"),
     (str(ASSETS / "app-icon.svg"), "spacesage/app/assets"),
     (str(ASSETS / "ATTRIBUTION.md"), "spacesage/app/assets"),
+    # rules.BUILTIN_RULES_DIR is Path(__file__).parent / "rules", which inside a
+    # one-file build is <extraction dir>/spacesage/rules: the packs have to land
+    # at that package-relative path.
+    (str(BUILTIN_RULES), "spacesage/rules"),
 ]
 
 # The Qt modules the app imports directly; PyInstaller's PySide6 hook resolves

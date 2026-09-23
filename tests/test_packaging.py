@@ -97,7 +97,9 @@ def test_spec_builds_one_windowed_file(tmp_path: Path) -> None:
 
 
 def test_spec_ships_what_the_app_reads_at_runtime(tmp_path: Path) -> None:
-    """The Lucide subset, the app icon and the attribution are inside the bundle."""
+    """The Lucide subset, the app icon, the attribution and the rule packs."""
+    from spacesage import rules
+
     datas = run_spec(tmp_path)["Analysis"]["datas"]
     bundled = {Path(source).resolve(): dest for source, dest in datas}
 
@@ -105,6 +107,11 @@ def test_spec_ships_what_the_app_reads_at_runtime(tmp_path: Path) -> None:
     assert bundled.get(icons) == "spacesage/app/assets/icons"
     assert bundled.get(ICON_SVG.resolve()) == "spacesage/app/assets"
     assert (REPO_ROOT / "spacesage" / "app" / "assets" / "ATTRIBUTION.md").resolve() in bundled
+    # rules.BUILTIN_RULES_DIR is package-relative; a frozen build resolves it
+    # under the extraction dir, so the packs must land at that exact path.
+    builtin_rules = rules.BUILTIN_RULES_DIR.resolve()
+    assert builtin_rules.is_dir() and list(builtin_rules.glob("*.toml"))
+    assert bundled.get(builtin_rules) == "spacesage/rules"
 
     for source in bundled:
         assert Path(source).exists(), f"{source} is referenced by the spec but missing"
@@ -261,7 +268,18 @@ def test_version_resource_parses_with_pyinstaller() -> None:
         },
     )
     assert isinstance(info, versioninfo.VSVersionInfo)
-    assert info.ffi.filevers == win_version.version_tuple()
+    fixed = info.ffi
+    # PyInstaller 6.22 stopped keeping the ``filevers`` tuple; the same numbers
+    # are the MS/LS halves of the fixed file info.
+    version = getattr(fixed, "filevers", None)
+    if version is None:
+        version = (
+            fixed.fileVersionMS >> 16,
+            fixed.fileVersionMS & 0xFFFF,
+            fixed.fileVersionLS >> 16,
+            fixed.fileVersionLS & 0xFFFF,
+        )
+    assert version == win_version.version_tuple()
     assert info.kids[0].kids[0].kids, "the string table has to carry the fields"
 
 
