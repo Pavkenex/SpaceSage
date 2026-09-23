@@ -283,8 +283,10 @@ a suggestion, an annotation or a rule proposal that a human accepts.
   but a plan's action list is only ever written by the rule engine.
 - **Settings** owns the provider list (add / edit / remove, presets for ollama, lmstudio,
   openai, openrouter, opencode and a custom endpoint), *Test connection* (the models the
-  endpoint offers and the latency), the default provider, and the three switches that decide
-  what leaves the machine: `redact_paths`, local-only and streaming.
+  endpoint offers and the latency), the default provider (named in the list), and the three
+  switches that decide what leaves the machine: `redact_paths`, local-only and streaming.
+  The key field takes the *name* of an environment variable, never the key itself: a
+  pasted secret is refused with that sentence rather than written into `ai.toml`.
 - **Status bar** carries one line about the layer — "AI off", "AI not ready: …" or the
   provider and model — and the session cost meter (tokens and estimated cost) once the
   AI is on.

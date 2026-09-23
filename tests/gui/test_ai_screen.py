@@ -32,7 +32,7 @@ from ai_stub import (
 )
 from spacesage import opportunities, rules
 from spacesage.ai import promote
-from spacesage.ai.config import AIConfig
+from spacesage.ai.config import AIConfig, ProviderConfig
 from spacesage.app import ai_models, dialogs, models
 from spacesage.app.views.plan_view import PlanView
 
@@ -788,6 +788,74 @@ def test_a_provider_that_is_not_filled_in_does_not_break_the_settings_card(
     page.save_button.click()
     assert page.base_url.text() == "http://127.0.0.1:8080/v1"
     assert ai_window.ai().config().configured("custom").base_url == "http://127.0.0.1:8080/v1"
+
+
+def test_a_pasted_key_is_refused_where_a_variable_name_belongs(
+    ai_window: Any, ai_stub: StubServer
+) -> None:
+    """The key field names a variable; a pasted secret must never reach ai.toml."""
+    assert ai_window.navigate("settings")
+    page = ai_window.settings_view
+    assert page.add_provider("openai") is True
+    before = ai_window.ai().config().configured("openai").api_key_env
+    assert before == "OPENAI_API_KEY"  # the preset's own variable name
+
+    page.api_key_env.setText("sk-this-is-not-a-variable-name")
+    page.save_button.click()
+
+    assert ai_window.ai().config().configured("openai").api_key_env == before
+    assert "environment variable" in page.ai_result.text()
+    path = ai_window.ai().path()
+    assert path is not None
+    assert "sk-this-is-not-a-variable-name" not in path.read_text(encoding="utf-8")
+
+    # A variable *name* saves, and the badge says whether that variable is set.
+    page.api_key_env.setText("SPACESAGE_TEST_KEY")
+    page.save_button.click()
+    assert ai_window.ai().config().configured("openai").api_key_env == "SPACESAGE_TEST_KEY"
+
+
+def test_a_key_pasted_in_the_file_is_never_rendered(tmp_path: Path, qtbot: object) -> None:
+    """A hand-edited ai.toml holding a key in api_key_env shows a bad name, not the key."""
+    from spacesage.app import state
+    from spacesage.app.views.settings_view import SettingsView
+
+    pasted = "oc_sk_secret-that-must-not-render"
+    provider = ProviderConfig(
+        name="zen",
+        kind="opencode",
+        base_url="https://opencode.ai/zen/v1",
+        model="big-pickle",
+        api_key_env=pasted,
+    )
+    service = ai_models.AIService(
+        config=AIConfig(enabled=True, default_provider="zen", providers=(provider,)),
+        config_path=tmp_path / "ai.toml",
+    )
+    page = SettingsView(state.Settings.ephemeral(), ai=service)
+    qtbot.addWidget(page)  # type: ignore[attr-defined]
+
+    assert page.current_provider_name() == "zen"
+    assert page.api_key_env.text() == "", "a key must never be painted into the field"
+    assert "not a variable name" in page.key_badge.text()
+    assert "never the key itself" in page.key_badge.toolTip()
+    assert pasted not in page.key_badge.toolTip()
+
+
+def test_the_provider_combo_says_which_one_is_default(ai_window: Any, ai_stub: StubServer) -> None:
+    """The default provider is the one every call uses, so the list names it."""
+    assert ai_window.navigate("settings")
+    page = ai_window.settings_view
+
+    assert page.provider_combo.currentText().endswith("· default")
+    assert page.add_provider("ollama") is True
+    assert not page.provider_combo.currentText().endswith("· default")
+
+    page.default_button.click()
+
+    assert ai_window.ai().config().default_provider == "ollama"
+    assert page.provider_combo.currentText().endswith("· default")
+    assert page.provider_combo.currentText().startswith("ollama")
 
 
 def test_the_policy_switches_write_the_file_the_engine_reads(

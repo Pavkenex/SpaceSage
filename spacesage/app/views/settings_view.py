@@ -206,6 +206,10 @@ class SettingsView(QWidget):
         self.api_key_env = QLineEdit(frame)
         self.api_key_env.setObjectName("AiKeyEnv")
         self.api_key_env.setPlaceholderText("OPENAI_API_KEY")
+        self.api_key_env.setToolTip(
+            "Name of the environment variable that holds the key (e.g. OPENCODE_API_KEY); "
+            "the key itself is never stored in ai.toml"
+        )
         key_row.addWidget(self.api_key_env, 1)
         self.key_badge = widgets.Badge("", "muted", frame)
         self.key_badge.setObjectName("AiKeyState")
@@ -332,7 +336,10 @@ class SettingsView(QWidget):
         blocked = self.provider_combo.blockSignals(True)
         self.provider_combo.clear()
         for name in names:
-            self.provider_combo.addItem(f"{name} · {config.configured(name).title}", name)
+            label = f"{name} · {config.configured(name).title}"
+            if name == config.default_provider:
+                label += " · default"
+            self.provider_combo.addItem(label, name)
         if current in names:
             self.provider_combo.setCurrentIndex(names.index(str(current)))
         self.provider_combo.blockSignals(blocked)
@@ -377,7 +384,19 @@ class SettingsView(QWidget):
         provider = self._ai.config().configured(name)
         self.base_url.setText(provider.base_url)
         self.model.setCurrentText(provider.model)
-        self.api_key_env.setText(provider.api_key_env or "")
+        key_env = provider.api_key_env or ""
+        if key_env and not ai_config.is_env_var_name(key_env):
+            # A hand-edited file can still carry a pasted key here.  Never render
+            # it: clear the field and say what it should have been instead.
+            self.api_key_env.clear()
+            self.key_badge.setText("not a variable name")
+            self.key_badge.set_tone("danger")
+            self.key_badge.setToolTip(
+                "This field names the environment variable that holds the key "
+                "(e.g. OPENCODE_API_KEY), never the key itself"
+            )
+            return
+        self.api_key_env.setText(key_env)
         set_key = provider.api_key(env=self._ai.env()) is not None
         self.key_badge.setText("key found" if set_key else "not set")
         self.key_badge.set_tone("success" if set_key else "muted")
@@ -441,6 +460,14 @@ class SettingsView(QWidget):
         provider = self._ai.config().configured(name)
         model = self.model.currentText().strip()
         key_env = self.api_key_env.text().strip()
+        if key_env and not ai_config.is_env_var_name(key_env):
+            self._report(
+                "Key env var takes the *name* of an environment variable (e.g. "
+                "OPENCODE_API_KEY), not the key itself - keys are read from the "
+                "environment and never stored in ai.toml.",
+                tone="danger",
+            )
+            return False
         updated = ProviderConfig(
             name=provider.name,
             kind=provider.kind,

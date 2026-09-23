@@ -29,6 +29,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import re
 import stat
 import sys
 import tomllib
@@ -249,6 +250,20 @@ def _flag(value: object, *, default: bool) -> bool:
     )
 
 
+_ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def is_env_var_name(value: str) -> bool:
+    """True when ``value`` could be the *name* of an environment variable.
+
+    ``api_key_env`` names where a key lives; it is never the key itself (keys
+    are never stored in ``ai.toml``).  Anything else -- typically a pasted
+    secret -- is refused with a hint rather than silently read as a variable
+    name that can never be set.
+    """
+    return bool(_ENV_VAR_NAME_RE.match(value.strip()))
+
+
 def is_loopback(host: str) -> bool:
     """True for ``localhost``, ``127.0.0.0/8`` and ``::1`` (and ``*.localhost``)."""
     name = host.strip().strip("[]").lower()
@@ -453,6 +468,18 @@ class ProviderConfig:
                 INVALID_CONFIG,
                 f"provider {self.name} has no model",
                 hint="set model in ai.toml, or run `spacesage ai models` to list the ones offered",
+                provider=self.name,
+            )
+        if self.api_key_env and not is_env_var_name(self.api_key_env):
+            raise AIError(
+                INVALID_CONFIG,
+                f"provider {self.name} has an unusable api_key_env "
+                "(it must name an environment variable, not hold a key)",
+                hint=(
+                    "api_key_env names the environment variable that holds the key "
+                    "(e.g. OPENCODE_API_KEY), never the key itself - the key is read "
+                    "from the environment and is never stored in ai.toml"
+                ),
                 provider=self.name,
             )
         return self if base_url == self.base_url else replace(self, base_url=base_url)

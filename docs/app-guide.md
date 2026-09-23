@@ -214,8 +214,11 @@ written by the rule engine.**
 Settings owns the provider list (add / edit / remove, presets for Ollama, LM
 Studio, OpenAI, OpenRouter and any custom OpenAI-compatible endpoint), *Test
 connection* (the models the endpoint offers, the models it actually calls, the
-latency), the default provider, and the three switches that decide what leaves
-the machine: `redact_paths`, local-only and streaming.
+latency), the default provider (named in the list), and the three switches that
+decide what leaves the machine: `redact_paths`, local-only and streaming. The
+key field names the environment variable holding the key (e.g.
+`OPENCODE_API_KEY`) — it is never the key itself, and a pasted secret is
+refused rather than stored.
 
 ---
 

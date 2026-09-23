@@ -20,8 +20,9 @@ POSIX_ONLY = pytest.mark.skipif(
 )
 
 
-def test_there_is_no_provider_until_one_is_configured() -> None:
-    config = AIConfig.load(env={})
+def test_there_is_no_provider_until_one_is_configured(tmp_path: Path) -> None:
+    # An explicit path: the test must not depend on the developer's own ai.toml.
+    config = AIConfig.load(env={"SPACESAGE_AI_CONFIG": str(tmp_path / "absent.toml")})
 
     assert config.enabled is False
     assert config.providers == ()
@@ -138,6 +139,29 @@ def test_a_local_preset_never_needs_a_key() -> None:
     assert provider.api_key(env={}) is None
     assert provider.has_key_source() is False  # nothing to look for
     assert provider.key_present(env={}) is True  # and nothing to complain about
+
+
+def test_api_key_env_must_name_a_variable_never_hold_the_key() -> None:
+    """A key pasted into ``api_key_env`` is refused with a hint, not silently ignored.
+
+    The value is read as ``os.environ[name]``, so a key stored there can never
+    resolve - and storing it also breaks the "keys are never in ai.toml" rule.
+    """
+    assert ai_config.is_env_var_name("OPENCODE_API_KEY") is True
+    assert ai_config.is_env_var_name("_local2") is True
+    assert ai_config.is_env_var_name("") is False
+    assert ai_config.is_env_var_name("oc_sk_3ee28ff502db-WqH") is False
+    assert ai_config.is_env_var_name("has space") is False
+
+    provider = ProviderConfig.from_preset("zen", "opencode", api_key_env="oc_sk_pasted-by-mistake")
+    with pytest.raises(AIError) as caught:
+        provider.validated()
+
+    assert caught.value.code == "invalid_config"
+    assert "api_key_env" in caught.value.message
+    assert "never stored in ai.toml" in (caught.value.hint or "")
+    # The raw editor still reads it back: only a *call* refuses.
+    assert provider.api_key_env == "oc_sk_pasted-by-mistake"
 
 
 def test_the_config_file_round_trips(tmp_path: Path) -> None:
