@@ -10,6 +10,8 @@ not understand.
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-10-01
+
 ### Changed
 - **The Import screen only chooses what to read.** It now shows two ways in side
   by side — a *New export* card (drop a CSV or browse) and a *Last analysis*
