@@ -73,19 +73,17 @@ Notes that save time later:
 
 ![The Import screen](../artifacts/gui/import.png)
 
-1. Drop the CSV on the zone, or **Browse for export**.
-2. **Target drive** — where you want moves to go (e.g. `D:`). Type the drive (or
-   an absolute folder) exactly as it appears on *this* machine. If the app
-   cannot measure its free space, it says so and asks you for the number when
-   the plan is built.
-3. **Reserve on target** — leave this at the default (20 GiB) unless you have a
-   reason. It is the free space the planner must never touch.
-4. **Smallest entry** — 100 MiB by default. Lower it if you are hunting for
-   smaller wins; raise it if the list feels long.
-5. **Analyze**. The status bar counts rows per second; the window stays usable.
+1. **New export** — drop the CSV on the zone, or **Browse for export**.
+2. **Last analysis** — if you analyzed before, this card shows how many rows
+   that index holds and how old it is; **Re-analyze** ranks it again without
+   re-reading the CSV.
+3. **Analysis options → Ignore files smaller than** — 100 MiB by default. Lower
+   it if you are hunting for smaller wins; raise it if the list feels long.
+4. **Analyze**. The status bar counts rows per second; the window stays usable.
 
-When it finishes you land on the Opportunities screen. If you already have an
-index for this export, **Use the existing index** skips straight there.
+When it finishes you land on the Opportunities screen. Where the moves go — the
+target drive and the free space to keep — is chosen later, when you build a plan
+(section 5).
 
 ---
 
@@ -119,7 +117,16 @@ effects, the alternatives, and where a move would land.
 
 ![The plan screen](../artifacts/gui/plan.png)
 
-**Build plan** turns the checked rows into one plan document:
+**Build plan** carries the checked rows to this screen. Before they become a
+plan, decide where the moves go:
+
+- **Send moves to** — the target drive (e.g. `D:`), picked from the drives on
+  this machine or typed. Leave it blank and moves stay out of the plan.
+- **Leave free on target** — free space the planner must never touch (20 GiB by
+  default). The line beneath reads the budget it implies: *"D: — 120 GB free ·
+  keep 20 GB · 100 GB usable for moves"*.
+
+**Build plan** then turns the checked rows into one plan document:
 
 - the header shows the plan's `sha256` and its workspace folder — that is the
   document you are about to approve;

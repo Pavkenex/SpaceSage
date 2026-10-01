@@ -232,6 +232,7 @@ def test_review_screenshot(
         model.toggle(path)
     window.opportunities_view.build_plan_button.click()
     plan_view = window.plan_page.plan
+    plan_view.build_button.click()
     qtbot.waitUntil(lambda: not plan_view.busy(), timeout=60_000)  # type: ignore[attr-defined]
     qtbot.wait(200)  # type: ignore[attr-defined]
 

@@ -23,7 +23,7 @@ from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QDialog, QPushButton
 
 from fixtures import gen_live
-from spacesage import executor, planner, planning, rules, stats
+from spacesage import executor, opportunities, planner, planning, rules, stats
 from spacesage.app import dialogs, plan_models, state, theme, widgets
 from spacesage.app.views.plan_view import PlanPage, PlanView
 from spacesage.app.windows import MainWindow
@@ -166,6 +166,46 @@ def test_the_empty_state_points_at_the_ranked_list(qtbot: object, tmp_path: Path
     assert seen == [True]
 
 
+def test_the_move_settings_live_on_the_plan_screen(qtbot: object, tmp_path: Path) -> None:
+    """Target drive and reserve are set where the plan is built, and they persist."""
+    settings = state.Settings.persisted(tmp_path / "settings.ini")
+    view = PlanView(tmp_path / "data", db_path=tmp_path / "index.db", settings=settings)
+    qtbot.addWidget(view)  # type: ignore[attr-defined]
+    view.show()
+    settle(qtbot)
+
+    view.target_combo.setCurrentText(str(tmp_path))
+    view.reserve_combo.setCurrentIndex(1)  # 5 GiB
+    assert view.target_drive() == str(tmp_path)
+    assert view.reserve_bytes() == 5 * 1024**3
+    assert settings.target_drive() == str(tmp_path)
+    assert settings.reserve_bytes() == 5 * 1024**3
+    assert "usable for moves" in view.moves_hint.text()
+
+    # Blanking the drive is a real choice: moves stay out of the plan.
+    view.target_combo.setCurrentText("")
+    assert view.target_drive() == ""
+    assert "No target drive" in view.moves_hint.text()
+
+
+def test_build_plan_carries_the_checked_rows_to_the_plan_screen(
+    window: MainWindow, fixture_listing: opportunities.OpportunityList
+) -> None:
+    """*Build plan* stages the selection; the Plan screen's own button drafts it."""
+    window.set_listing(fixture_listing)
+    window.navigate("opportunities")
+    paths = [row.path for row in fixture_listing.rows][:2]
+    assert paths
+    assert window.build_plan(paths) is True
+
+    plan_view = window.plan_page.plan
+    assert window.current_page() == "plan"
+    assert plan_view.staged_paths() == tuple(str(path) for path in paths)
+    assert plan_view.build_button.isEnabled()
+    assert plan_view.session() is None, "nothing is drafted until the target is chosen"
+    assert "ready to plan" in plan_view.staged_label.text()
+
+
 # --------------------------------------------------------------------------- #
 # Building from the checked rows
 # --------------------------------------------------------------------------- #
@@ -196,6 +236,8 @@ def test_building_from_the_list_lands_on_the_plan_page(
 
     opportunities_view.build_plan_button.click()
     plan_view = window.plan_page.plan
+    assert plan_view.build_button.isEnabled(), "the checked rows were not carried over"
+    plan_view.build_button.click()
     gate(plan_view, qtbot)
 
     assert window.current_page() == "plan"
@@ -234,6 +276,7 @@ def test_the_folder_row_covers_its_children_in_the_plan(
 
     window.opportunities_view.build_plan_button.click()
     plan_view = window.plan_page.plan
+    plan_view.build_button.click()
     gate(plan_view, qtbot)
     draft = plan_view.draft()
     assert draft is not None
@@ -834,6 +877,7 @@ def test_the_full_loop_executes_and_undo_restores_the_tree(
     # 2. Build one plan from them.
     window.opportunities_view.build_plan_button.click()
     plan_view = window.plan_page.plan
+    plan_view.build_button.click()
     gate(plan_view, qtbot)
     assert window.current_page() == "plan"
     session = plan_view.session()

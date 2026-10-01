@@ -20,6 +20,9 @@ htmlcov/
 _spacesage_quarantine/
 journal.jsonl
 
+# Local brainstorming scratch (visual companion)
+.superpowers/
+
 # Editors / OS
 .idea/
 .vscode/

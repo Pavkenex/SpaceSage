@@ -112,6 +112,7 @@ class MainWindow(QMainWindow):
         self.plan_page.goToOpportunities.connect(lambda: self.navigate("opportunities"))
         self.plan_page.statusMessage.connect(self.set_status)
         self.plan_page.aiChanged.connect(self._on_ai_changed)
+        self.plan_page.targetChanged.connect(self.opportunities_view.set_target_drive)
         self.settings_view.themeModeChanged.connect(self.themeModeChanged.emit)
         self.settings_view.aiChanged.connect(self._on_ai_changed)
 
@@ -230,7 +231,7 @@ class MainWindow(QMainWindow):
 
     def set_listing(self, listing: opportunities.OpportunityList | None) -> None:
         """Adopt an analysis and show it."""
-        self.opportunities_view.set_target_drive(self.import_view.target_drive())
+        self.opportunities_view.set_target_drive(self._settings.target_drive())
         self.opportunities_view.set_listing(listing)
         if listing is None:
             self.status_dataset.setText("No analysis yet")
@@ -242,7 +243,12 @@ class MainWindow(QMainWindow):
         return self.opportunities_view.listing()
 
     def build_plan(self, paths: object) -> bool:
-        """Compose a plan out of the checked rows and put the user on it (design §9, screen 3)."""
+        """Carry the checked rows to the Plan screen, where the target is chosen (design §9).
+
+        The move settings live on the Plan screen, so this no longer drafts the
+        plan: it stages the selection and hands the user to the screen that
+        decides where the moves go, whose own *Build plan* drafts it.
+        """
         listing = self.listing()
         if listing is None:
             return False
@@ -250,7 +256,8 @@ class MainWindow(QMainWindow):
         if not wanted:
             return False
         self.navigate("plan")
-        return self.plan_page.plan.build(listing, wanted)
+        self.plan_page.plan.stage(listing, wanted)
+        return True
 
     def _on_busy_changed(self, busy: bool) -> None:
         self.status_message.setText("Analyzing…" if busy else "")

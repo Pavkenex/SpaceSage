@@ -122,15 +122,11 @@ def test_the_window_reports_the_analysis_in_the_status_bar(
     window.close()
 
 
-def test_min_size_and_target_are_persisted(
+def test_the_analysis_floor_is_persisted(
     qtbot: object, settings: state.Settings, tmp_path: Path
 ) -> None:
-    """The parameters the user picks survive the screen (they feed the plan)."""
+    """The analysis option the user picks survives the screen."""
     view = ImportView(settings, db_path=tmp_path / "index.db")
     qtbot.addWidget(view)  # type: ignore[attr-defined]
     view.min_size_combo.setCurrentIndex(2)
-    view.target_combo.setCurrentText("D:")
-    view.reserve_combo.setCurrentIndex(1)
     assert view.min_size() >= 10 * 1024**2
-    assert view.target_drive() == "D:"
-    assert view.reserve_bytes() > 0

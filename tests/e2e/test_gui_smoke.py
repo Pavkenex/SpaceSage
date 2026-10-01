@@ -269,6 +269,8 @@ def test_the_app_runs_the_whole_loop_on_the_full_disk(
         # -- screen 3: the plan, then the dry run and the run itself. ---------- #
         opportunities_view.build_plan_button.click()
         plan_view = window.plan_page.plan
+        assert plan_view.build_button.isEnabled(), "the checked rows were not carried to the plan"
+        plan_view.build_button.click()
         wait(qtbot, lambda: not plan_view.busy(), what="the plan")
         assert window.current_page() == "plan"
         session = plan_view.session()

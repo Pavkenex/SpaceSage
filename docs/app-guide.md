@@ -48,19 +48,19 @@ parameters, press **Analyze**.
   Attributes, Files, Folders`); columns are matched by name, so extra columns
   are ignored and a missing optional column is fine. A file that is not a
   WizTree export fails with a readable reason instead of a half-built index.
-- **Target drive** — where planned moves go. Helper text tells you whether the
-  app can measure that drive's free space on this machine; if it cannot (a drive
-  that is not attached, or an export from another machine), you state its free
-  space when the plan is built.
-- **Reserve on target** — free space the planner must leave untouched
-  (default 20 GiB). Moves are budgeted against `free − reserve`, so a plan can
-  never fill the drive it is moving to.
-- **Smallest entry** — the size floor for the list (default 100 MiB). Lower it
-  to see more; every row below the floor is simply not listed, nothing is
-  hidden that would otherwise be acted on.
+- **New export** — drop the CSV on the zone or **Browse for export**.
+- **Last analysis** — the index the last run left, with its row count and age.
+  **Re-analyze** ranks it again without re-reading the CSV; there is nothing to
+  re-analyze until you have analyzed once.
+- **Analysis options → Ignore files smaller than** — the size floor for the list
+  (default 100 MiB). Lower it to see more; every row below the floor is simply
+  not listed, nothing is hidden that would otherwise be acted on.
 - **Analyze** runs on a worker thread: the window stays responsive and the
-  status bar counts rows per second while it reads. **Use the existing index**
-  skips the import entirely when you already analyzed this export.
+  status bar counts rows per second while it reads.
+
+Where the moves go is a plan decision, not an import one: the target drive and
+the free-space reserve live on the **Plan** screen, where the plan is drafted
+and the budget they imply is shown.
 
 Re-importing **replaces** the index — a fresh export, a fresh start. Nothing on
 disk is touched by an import or by the analysis that follows it.
@@ -227,9 +227,19 @@ refused rather than stored.
 
 ![The Plan screen: summary cards, the action table with approval checkboxes, the dry-run, undo and execute actions](../artifacts/gui/plan.png)
 
-The checked rows become one plan. The header shows the plan's own identity —
-`plan sha256:…` and the workspace folder it lives in — so what you approve is
-the exact document you reviewed, not "some plan".
+**Build plan** on the Opportunities screen carries your checked rows here.
+Before they become a plan, the **Where should moves go?** card settles the
+moves:
+
+- **Send moves to** — the target drive, picked from this machine's drives or
+  typed. Left blank, moves stay out of the plan.
+- **Leave free on target** — free space the planner must never touch (20 GiB by
+  default); the line beneath reads the budget it implies, e.g. *"D: — 120 GB
+  free · keep 20 GB · 100 GB usable for moves"*.
+
+Press **Build plan** here and the checked rows become one plan. The header shows
+the plan's own identity — `plan sha256:…` and the workspace folder it lives in —
+so what you approve is the exact document you reviewed, not "some plan".
 
 - **Summary cards** — plan actions (executable vs advice), how many are
   approved, the bytes the approved set claims, the advice count and the

@@ -397,8 +397,8 @@ def test_capture_writes_a_real_render_of_the_window(tmp_path: Path) -> None:
     )
     colours = {
         image.pixel(x, y)
-        for y in range(0, image.height(), 23)
-        for x in range(0, image.width(), 23)
+        for y in range(0, image.height(), 11)
+        for x in range(0, image.width(), 11)
         if image.pixelColor(x, y).alpha() > 0
     }
     assert len(colours) > 20, "the capture is blank"

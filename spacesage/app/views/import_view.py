@@ -1,21 +1,26 @@
-"""Import screen: drop a WizTree CSV, choose the run's parameters, analyze.
+"""Import screen: pick what to read, then analyze (design §9, screen 1).
 
-Design §9, screen 1: file picker or drag & drop, target drive, free-space
-reserve and size filter, and an *Analyze* that never blocks the UI -- the
-engine runs in a worker thread and reports rows/sec while it reads.
+The screen has one job: choose the data.  Two ways in, shown side by side --
+drop a fresh WizTree CSV, or continue from the index the last analysis left --
+plus the single analysis option (the size floor), and an *Analyze* that never
+blocks the UI: the engine runs in a worker thread and reports rows/sec while it
+reads.
+
+Where moves go and how much free space to keep are decisions about the *plan*,
+not about reading the export, so they live on the Plan screen
+(``plan_view.PlanView``), next to the budget they affect.
 """
 
 from __future__ import annotations
 
-import os
 import sqlite3
+import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
-    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -26,37 +31,34 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from spacesage import planner, rules, stats
+from spacesage import rules, stats
+from spacesage._util import plural
 from spacesage.app import state, theme, widgets
 from spacesage.app.workers import AnalysisWorker, BackgroundTask
 from spacesage.ingest import IngestProgress
-
-RESERVE_CHOICES: tuple[int, ...] = (0, 5, 10, 20, 50, 100)
-"""Free-space reserve presets in GiB (the planner's ``--reserve``)."""
 
 MIN_SIZE_CHOICES: tuple[str, ...] = ("10 MiB", "50 MiB", "100 MiB", "250 MiB", "500 MiB", "1 GiB")
 """Size-filter presets; parsed by the engine's own ``parse_size``."""
 
 
-def suggested_drives() -> tuple[str, ...]:
-    """Candidate target drives of this machine (the field stays editable)."""
-    if os.name == "nt":  # pragma: no cover - Windows only
-        found = [f"{letter}:\\" for letter in "DEFGHIJKLMNOPQRSTUVWXYZ"]
-        return tuple(drive for drive in found if Path(drive).exists())
-    mounts: list[str] = []
-    try:
-        with open("/proc/mounts", encoding="utf-8") as handle:
-            for line in handle:
-                parts = line.split()
-                if len(parts) >= 2 and parts[1].startswith("/") and parts[1] != "/":
-                    mounts.append(parts[1])
-    except OSError:
-        mounts = []
-    return tuple(dict.fromkeys([*mounts[:8], "/"]))
+def human_age(seconds: float) -> str:
+    """A short "x ago" phrase for a file's age (seconds since it was written)."""
+    minutes = int(max(0.0, seconds) // 60)
+    if minutes < 1:
+        return "just now"
+    if minutes < 60:
+        return f"{plural(minutes, 'minute')} ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{plural(hours, 'hour')} ago"
+    days = hours // 24
+    if days < 30:
+        return f"{plural(days, 'day')} ago"
+    return f"{plural(days // 30, 'month')} ago"
 
 
 class ImportView(QWidget):
-    """Screen 1: the export, the run's parameters and the analysis kickoff."""
+    """Screen 1: the source, the analysis option and the kickoff."""
 
     analysisReady = Signal(object)
     """Emitted with the finished :class:`~spacesage.opportunities.OpportunityList`."""
@@ -97,8 +99,9 @@ class ImportView(QWidget):
         title.setObjectName("PageTitle")
         head_layout.addWidget(title)
         subtitle = QLabel(
-            "SpaceSage reads the CSV, ranks what is worth doing and shows the estimated "
-            "gain of every suggestion. The analysis is read-only.",
+            "Pick a WizTree CSV, or continue from your last analysis. SpaceSage ranks "
+            "what is worth doing and shows the estimated gain of every suggestion. "
+            "Nothing on disk is touched.",
             header,
         )
         subtitle.setObjectName("PageSubtitle")
@@ -106,59 +109,13 @@ class ImportView(QWidget):
         head_layout.addWidget(subtitle)
         layout.addWidget(header)
 
-        self.drop_zone = widgets.DropZone("Drop a WizTree CSV export here, or browse for it", self)
-        self.drop_zone.fileDropped.connect(self.set_csv)
-        self.drop_zone.set_detail("Exports end in .csv and may be UTF-8 or UTF-16.")
-        layout.addWidget(self.drop_zone)
+        sources = QHBoxLayout()
+        sources.setSpacing(theme.SPACE["md"])
+        sources.addWidget(self._build_new_export_card(), 3)
+        sources.addWidget(self._build_last_analysis_card(), 2)
+        layout.addLayout(sources)
 
-        browse_row = QHBoxLayout()
-        browse_row.setSpacing(theme.SPACE["sm"])
-        self.browse_button = QPushButton("Browse for export", self)
-        self.browse_button.setObjectName("Primary")
-        self.browse_button.setToolTip("Choose the WizTree CSV export to analyze")
-        self.browse_button.clicked.connect(self._browse)
-        browse_row.addWidget(self.browse_button)
-        self.csv_label = widgets.mono_label("No export selected", self)
-        browse_row.addWidget(self.csv_label, 1)
-        layout.addLayout(browse_row)
-
-        options = QFrame(self)
-        form = QFormLayout(options)
-        form.setContentsMargins(0, 0, 0, 0)
-        form.setSpacing(theme.SPACE["sm"])
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
-
-        self.target_combo = QComboBox(options)
-        self.target_combo.setEditable(True)
-        self.target_combo.setToolTip("Drive the plan will move data to (S9 builds the plan)")
-        self.target_combo.addItems(suggested_drives())
-        self.target_combo.setCurrentText(self._settings.target_drive("D:"))
-        self.target_combo.currentTextChanged.connect(self._update_target_hint)
-        form.addRow("Target drive", self.target_combo)
-
-        self.target_hint = QLabel("", options)
-        self.target_hint.setObjectName("Faint")
-        self.target_hint.setWordWrap(True)
-        form.addRow("", self.target_hint)
-
-        self.reserve_combo = QComboBox(options)
-        self.reserve_combo.setToolTip("Free space the plan leaves untouched on the target")
-        for gib in RESERVE_CHOICES:
-            self.reserve_combo.addItem(f"{gib} GiB", gib * 1024**3)
-        reserve = self._settings.reserve_bytes()
-        index = self.reserve_combo.findData(reserve)
-        self.reserve_combo.setCurrentIndex(index if index >= 0 else 2)
-        form.addRow("Reserve on target", self.reserve_combo)
-
-        self.min_size_combo = QComboBox(options)
-        self.min_size_combo.setToolTip("Entries smaller than this are left off the list")
-        self.min_size_combo.addItems(MIN_SIZE_CHOICES)
-        saved = self._settings.min_size()
-        for position, label in enumerate(MIN_SIZE_CHOICES):
-            if rules.parse_size(label) == saved:
-                self.min_size_combo.setCurrentIndex(position)
-        form.addRow("Smallest entry", self.min_size_combo)
-        layout.addWidget(options)
+        layout.addWidget(self._build_analysis_options())
 
         self.progress = QProgressBar(self)
         self.progress.setRange(0, 100)
@@ -179,18 +136,82 @@ class ImportView(QWidget):
         self.analyze_button.setEnabled(False)
         self.analyze_button.clicked.connect(lambda: self.analyze())
         actions.addWidget(self.analyze_button)
-
-        self.reuse_button = QPushButton("Use the existing index", self)
-        self.reuse_button.setObjectName("Quiet")
-        self.reuse_button.setToolTip(f"Rank the index already at {self._db_path}")
-        self.reuse_button.clicked.connect(lambda: self.analyze(reuse_index=True))
-        actions.addWidget(self.reuse_button)
         actions.addStretch(1)
         layout.addLayout(actions)
         layout.addStretch(1)
 
-        self._update_target_hint(self.target_combo.currentText())
         self.refresh_existing()
+
+    def _build_new_export_card(self) -> QFrame:
+        card = QFrame(self)
+        card.setObjectName("Card")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(
+            theme.SPACE["md"], theme.SPACE["md"], theme.SPACE["md"], theme.SPACE["md"]
+        )
+        box.setSpacing(theme.SPACE["sm"])
+        box.addWidget(widgets.section_label("New export", card))
+
+        self.drop_zone = widgets.DropZone("Drop a WizTree CSV here, or browse for it", card)
+        self.drop_zone.fileDropped.connect(self.set_csv)
+        self.drop_zone.set_detail("Exports end in .csv and may be UTF-8 or UTF-16.")
+        box.addWidget(self.drop_zone, 1)
+
+        browse_row = QHBoxLayout()
+        browse_row.setSpacing(theme.SPACE["sm"])
+        self.browse_button = QPushButton("Browse for export", card)
+        self.browse_button.setObjectName("Primary")
+        self.browse_button.setToolTip("Choose the WizTree CSV export to analyze")
+        self.browse_button.clicked.connect(self._browse)
+        browse_row.addWidget(self.browse_button)
+        self.csv_label = widgets.mono_label("No export selected", card)
+        browse_row.addWidget(self.csv_label, 1)
+        box.addLayout(browse_row)
+        return card
+
+    def _build_last_analysis_card(self) -> QFrame:
+        card = QFrame(self)
+        card.setObjectName("Card")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(
+            theme.SPACE["md"], theme.SPACE["md"], theme.SPACE["md"], theme.SPACE["md"]
+        )
+        box.setSpacing(theme.SPACE["sm"])
+        box.addWidget(widgets.section_label("Last analysis", card))
+
+        self.index_label = widgets.muted_label("", card)
+        self.index_label.setWordWrap(True)
+        box.addWidget(self.index_label, 1)
+
+        self.reuse_button = QPushButton("Re-analyze", card)
+        self.reuse_button.clicked.connect(lambda: self.analyze(reuse_index=True))
+        box.addWidget(self.reuse_button, 0, Qt.AlignmentFlag.AlignLeft)
+        return card
+
+    def _build_analysis_options(self) -> QFrame:
+        card = QFrame(self)
+        card.setObjectName("Card")
+        box = QHBoxLayout(card)
+        box.setContentsMargins(
+            theme.SPACE["md"], theme.SPACE["sm"], theme.SPACE["md"], theme.SPACE["sm"]
+        )
+        box.setSpacing(theme.SPACE["sm"])
+        box.addWidget(widgets.section_label("Analysis options", card))
+        box.addStretch(1)
+
+        caption = QLabel("Ignore files smaller than", card)
+        caption.setObjectName("Muted")
+        box.addWidget(caption)
+
+        self.min_size_combo = QComboBox(card)
+        self.min_size_combo.setToolTip("Entries smaller than this are left off the list")
+        self.min_size_combo.addItems(MIN_SIZE_CHOICES)
+        saved = self._settings.min_size()
+        for position, label in enumerate(MIN_SIZE_CHOICES):
+            if rules.parse_size(label) == saved:
+                self.min_size_combo.setCurrentIndex(position)
+        box.addWidget(self.min_size_combo)
+        return card
 
     # -- queries ---------------------------------------------------------- #
 
@@ -212,15 +233,6 @@ class ImportView(QWidget):
         """The selected size filter in bytes."""
         return int(rules.parse_size(MIN_SIZE_CHOICES[self.min_size_combo.currentIndex()]))
 
-    def target_drive(self) -> str:
-        """The selected target drive."""
-        return self.target_combo.currentText().strip()
-
-    def reserve_bytes(self) -> int:
-        """The selected free-space reserve in bytes."""
-        data = self.reserve_combo.currentData()
-        return int(data) if data is not None else state.DEFAULT_RESERVE_BYTES
-
     # -- actions ---------------------------------------------------------- #
 
     def set_csv(self, path: str | Path) -> None:
@@ -238,14 +250,19 @@ class ImportView(QWidget):
         self.analyze_button.setEnabled(exists and not self._busy)
 
     def refresh_existing(self) -> None:
-        """Enable "use the existing index" when there is one to use."""
+        """Fill the last-analysis card; enable *Re-analyze* when there is an index."""
         has_index = self._db_path.is_file()
         self.reuse_button.setEnabled(has_index and not self._busy)
-        self.reuse_button.setToolTip(
-            f"Rank the index already at {self._db_path}"
-            if has_index
-            else "No index yet: analyze an export first"
-        )
+        if has_index:
+            try:
+                age = human_age(time.time() - self._db_path.stat().st_mtime)
+            except OSError:  # pragma: no cover - the file vanished under us
+                age = "unknown age"
+            self.index_label.setText(f"{index_entries(self._db_path):,} rows · {age}")
+            self.reuse_button.setToolTip(f"Rank the index already at {self._db_path}")
+        else:
+            self.index_label.setText("Nothing analyzed yet. Analyze an export to create the index.")
+            self.reuse_button.setToolTip("No index yet: analyze an export first")
 
     def analyze(self, *, reuse_index: bool = False) -> None:
         """Start the analysis worker (never blocks the UI thread)."""
@@ -262,8 +279,6 @@ class ImportView(QWidget):
             self._report("There is no index to reuse yet.", "warning")
             return
 
-        self._settings.set_target_drive(self.target_drive())
-        self._settings.set_reserve_bytes(self.reserve_bytes())
         self._settings.set_min_size(self.min_size())
         self._settings.set_last_db(str(self._db_path))
 
@@ -296,8 +311,6 @@ class ImportView(QWidget):
             self.analyze_button,
             self.browse_button,
             self.reuse_button,
-            self.target_combo,
-            self.reserve_combo,
             self.min_size_combo,
         ):
             control.setEnabled(not busy)
@@ -352,26 +365,6 @@ class ImportView(QWidget):
         )
         if chosen:
             self.set_csv(chosen)
-
-    def _update_target_hint(self, drive: str) -> None:
-        value = drive.strip()
-        if not value:
-            self.target_hint.setText("No target drive: moves stay out of the plan.")
-            return
-        try:
-            free = planner.measure_free_space(value)
-        except planner.PlannerError:
-            self.target_hint.setText(
-                f"{value} cannot be measured on this machine — state its free space when the "
-                "plan is built."
-            )
-            return
-        reserve = self.reserve_bytes()
-        usable = max(0, free - reserve)
-        self.target_hint.setText(
-            f"{stats.format_bytes(free)} free, {stats.format_bytes(reserve)} reserved → "
-            f"{stats.format_bytes(usable)} usable for moves."
-        )
 
 
 def index_entries(path: Path) -> int:

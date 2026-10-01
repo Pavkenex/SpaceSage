@@ -103,6 +103,7 @@ def test_plan_flow_screenshots(
     window.opportunities_view.build_plan_button.click()
 
     plan_view = window.plan_page.plan
+    plan_view.build_button.click()
     qtbot.waitUntil(lambda: not plan_view.busy(), timeout=30_000)  # type: ignore[attr-defined]
     window.navigate("plan")
     qtbot.wait(260)  # type: ignore[attr-defined]

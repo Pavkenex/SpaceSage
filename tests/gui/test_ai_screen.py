@@ -611,6 +611,7 @@ def test_a_suggestion_is_never_executable_without_a_rule(
     view.table_model().toggle(row.path)
     view.request_plan()
     plan_view = ai_window.plan_page.plan
+    plan_view.build_button.click()
     qtbot.waitUntil(lambda: not plan_view.busy(), timeout=60_000)  # type: ignore[attr-defined]
     qtbot.wait(120)  # type: ignore[attr-defined]
 
@@ -648,6 +649,7 @@ def test_the_review_lists_the_risks_and_can_take_an_action_out(
         model.toggle(path)
     window.opportunities_view.build_plan_button.click()
     plan_view = window.plan_page.plan
+    plan_view.build_button.click()
     qtbot.waitUntil(lambda: not plan_view.busy(), timeout=60_000)  # type: ignore[attr-defined]
     qtbot.wait(120)  # type: ignore[attr-defined]
 
@@ -697,6 +699,7 @@ def test_the_review_failure_is_said_inline_not_raised(
     model.toggle(seed)
     window.opportunities_view.build_plan_button.click()
     plan_view = window.plan_page.plan
+    plan_view.build_button.click()
     qtbot.waitUntil(lambda: not plan_view.busy(), timeout=60_000)  # type: ignore[attr-defined]
     ai_stub.queue_error(500, message="model is on fire")
 

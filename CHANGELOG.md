@@ -10,6 +10,18 @@ not understand.
 
 ## [Unreleased]
 
+### Changed
+- **The Import screen only chooses what to read.** It now shows two ways in side
+  by side — a *New export* card (drop a CSV or browse) and a *Last analysis*
+  card carrying the index's row count and age (*Re-analyze* ranks it again) —
+  and the one analysis option, relabelled *Ignore files smaller than*. The move
+  settings left the screen: *Target drive* and *Reserve on target* are decisions
+  about the plan, asked before you had seen a single row. They are now the
+  **Where should moves go?** card on the **Plan** screen (*Send moves to* and
+  *Leave free on target*, with a live `free − reserve` budget line), and
+  *Build plan* in the ranked list carries the checked rows there so the target
+  is chosen before the plan is drafted.
+
 ## [0.1.9] - 2026-10-01
 
 ### Added

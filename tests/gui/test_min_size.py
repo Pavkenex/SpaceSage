@@ -58,6 +58,7 @@ def app_with_a_plan(live_sandbox: LiveSandbox, sandbox_window: Any, qtbot: objec
     settle(qtbot)
     window.opportunities_view.build_plan_button.click()
     plan_view = window.plan_page.plan
+    plan_view.build_button.click()
     qtbot.waitUntil(lambda: not plan_view.busy(), timeout=30_000)  # type: ignore[attr-defined]
     settle(qtbot)
     return window

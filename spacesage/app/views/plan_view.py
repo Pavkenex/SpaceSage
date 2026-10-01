@@ -33,6 +33,7 @@ what the engine returned and collects the user's decisions.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,7 @@ from PySide6.QtCore import QModelIndex, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -55,6 +57,7 @@ from PySide6.QtWidgets import (
 )
 
 from spacesage import executor, opportunities, planner, planning, stats
+from spacesage._util import plural
 from spacesage.ai import Annotation, ReviewOutcome
 from spacesage.app import (
     ai_models,
@@ -104,6 +107,26 @@ discover later.  A refused action is the engine saying no, so it is a blocker.
 REVIEW_ORDER: tuple[str, ...] = ("danger", "warning", "info")
 """Annotations are shown most severe first (the engine's ordering, kept)."""
 
+RESERVE_CHOICES: tuple[int, ...] = (0, 5, 10, 20, 50, 100)
+"""Free-space reserve presets in GiB (the planner's ``--reserve``)."""
+
+
+def suggested_drives() -> tuple[str, ...]:
+    """Candidate target drives of this machine (the field stays editable)."""
+    if os.name == "nt":  # pragma: no cover - Windows only
+        found = [f"{letter}:\\" for letter in "DEFGHIJKLMNOPQRSTUVWXYZ"]
+        return tuple(drive for drive in found if Path(drive).exists())
+    mounts: list[str] = []
+    try:
+        with open("/proc/mounts", encoding="utf-8") as handle:
+            for line in handle:
+                parts = line.split()
+                if len(parts) >= 2 and parts[1].startswith("/") and parts[1] != "/":
+                    mounts.append(parts[1])
+    except OSError:
+        mounts = []
+    return tuple(dict.fromkeys([*mounts[:8], "/"]))
+
 
 def _ordered_annotations(outcome: ReviewOutcome | None) -> tuple[Annotation, ...]:
     """The annotations of a review, most severe first, ties in the model's order."""
@@ -147,6 +170,9 @@ class PlanView(QWidget):
     aiChanged = Signal()
     """The plan review ran (the shell re-reads the AI status and the meter)."""
 
+    targetChanged = Signal(str)
+    """The move target changed: the ranked list re-reads it for destination previews."""
+
     def __init__(
         self,
         data_root: Path | None = None,
@@ -177,6 +203,8 @@ class PlanView(QWidget):
         self._completed = 0
         self.last_error = ""
         """The engine's own message when the last task failed (tests read it)."""
+        self._staged: tuple[opportunities.OpportunityList, tuple[str, ...]] | None = None
+        """The rows checked in the list, held until the user presses *Build plan* here."""
         self._build()
         self._refresh()
 
@@ -210,13 +238,15 @@ class PlanView(QWidget):
         self.subtitle.setWordWrap(True)
         head.addWidget(self.subtitle)
         layout.addWidget(header)
+        layout.addWidget(self._build_moves_card())
 
         self.stack = QStackedWidget(self)
         self.empty_state = widgets.EmptyState(
             "No plan yet",
-            "Select opportunities in the ranked list and press Build plan: they become "
-            "one plan here, with per-item approval, a dry-run preview of every resolved "
-            "operation and a run you can undo.",
+            "Select opportunities in the ranked list and press Build plan: they arrive "
+            "here, you choose where the moves go, and they become one plan — with "
+            "per-item approval, a dry-run preview of every resolved operation and a run "
+            "you can undo.",
             icon_name="clipboard-list",
             action="Go to Opportunities",
             on_action=self.goToOpportunities.emit,
@@ -229,6 +259,135 @@ class PlanView(QWidget):
 
         layout.addWidget(self._build_progress())
         self._shortcuts()
+
+    def _build_moves_card(self) -> QWidget:
+        """The plan's inputs -- where moves go and how much to keep -- set where they act."""
+        card = QFrame(self)
+        card.setObjectName("Card")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(
+            theme.SPACE["md"], theme.SPACE["sm"], theme.SPACE["md"], theme.SPACE["sm"]
+        )
+        box.setSpacing(theme.SPACE["xs"])
+
+        row = QHBoxLayout()
+        row.setSpacing(theme.SPACE["sm"])
+        row.addWidget(widgets.section_label("Where should moves go?", card))
+        row.addStretch(1)
+        self.staged_label = QLabel("", card)
+        self.staged_label.setObjectName("Muted")
+        row.addWidget(self.staged_label)
+        self.build_button = QPushButton("Build plan", card)
+        self.build_button.setObjectName("Primary")
+        self.build_button.setToolTip("Draft the plan out of the rows checked in the ranked list")
+        self.build_button.setEnabled(False)
+        self.build_button.clicked.connect(self._build_staged)
+        row.addWidget(self.build_button)
+        box.addLayout(row)
+
+        form = QHBoxLayout()
+        form.setSpacing(theme.SPACE["sm"])
+        target_caption = QLabel("Send moves to", card)
+        target_caption.setObjectName("Muted")
+        form.addWidget(target_caption)
+        self.target_combo = QComboBox(card)
+        self.target_combo.setEditable(True)
+        self.target_combo.setMinimumWidth(150)
+        self.target_combo.setToolTip("Drive the plan moves data to (leave blank for no moves)")
+        self.target_combo.addItems(suggested_drives())
+        self.target_combo.setCurrentText(self._settings.target_drive("D:"))
+        # An editable combo emits currentTextChanged for a picked item but
+        # editTextChanged for typed text; the target follows both.
+        self.target_combo.currentTextChanged.connect(self._on_target_changed)
+        self.target_combo.editTextChanged.connect(self._on_target_changed)
+        form.addWidget(self.target_combo)
+
+        reserve_caption = QLabel("Leave free on target", card)
+        reserve_caption.setObjectName("Muted")
+        form.addWidget(reserve_caption)
+        self.reserve_combo = QComboBox(card)
+        self.reserve_combo.setToolTip("Free space the plan leaves untouched on the target")
+        for gib in RESERVE_CHOICES:
+            self.reserve_combo.addItem(f"{gib} GiB", gib * 1024**3)
+        reserve = self._settings.reserve_bytes()
+        position = self.reserve_combo.findData(reserve)
+        self.reserve_combo.setCurrentIndex(position if position >= 0 else 3)
+        self.reserve_combo.currentIndexChanged.connect(self._on_reserve_changed)
+        form.addWidget(self.reserve_combo)
+        form.addStretch(1)
+        box.addLayout(form)
+
+        self.moves_hint = QLabel("", card)
+        self.moves_hint.setObjectName("Faint")
+        self.moves_hint.setWordWrap(True)
+        box.addWidget(self.moves_hint)
+        self._refresh_moves_hint()
+        return card
+
+    def target_drive(self) -> str:
+        """The chosen target drive (``""`` when moves are left out)."""
+        return self.target_combo.currentText().strip()
+
+    def reserve_bytes(self) -> int:
+        """The chosen free-space reserve in bytes."""
+        data = self.reserve_combo.currentData()
+        return int(data) if data is not None else state.DEFAULT_RESERVE_BYTES
+
+    def _on_target_changed(self, drive: str) -> None:
+        value = drive.strip()
+        self._settings.set_target_drive(value)
+        self._refresh_moves_hint()
+        self.targetChanged.emit(value)
+
+    def _on_reserve_changed(self) -> None:
+        self._settings.set_reserve_bytes(self.reserve_bytes())
+        self._refresh_moves_hint()
+
+    def _refresh_moves_hint(self) -> None:
+        """The live budget line: free space on the target minus the reserve."""
+        spec = self.target_drive()
+        if not spec:
+            self.moves_hint.setText("No target drive: moves stay out of the plan.")
+            return
+        try:
+            free = planner.measure_free_space(spec)
+        except planner.PlannerError:
+            self.moves_hint.setText(
+                f"{spec} cannot be measured on this machine — state its free space "
+                "when the plan is built."
+            )
+            return
+        reserve = self.reserve_bytes()
+        usable = max(0, free - reserve)
+        self.moves_hint.setText(
+            f"{spec} — {stats.format_bytes(free)} free · keep {stats.format_bytes(reserve)} · "
+            f"{stats.format_bytes(usable)} usable for moves"
+        )
+
+    def stage(self, listing: opportunities.OpportunityList, paths: Sequence[str]) -> None:
+        """Hold the checked rows until *Build plan* is pressed here, target chosen first."""
+        self._staged = (listing, tuple(str(path) for path in paths))
+        self._refresh_staged()
+
+    def staged_paths(self) -> tuple[str, ...]:
+        """The rows waiting to be planned (empty when nothing is staged)."""
+        return () if self._staged is None else self._staged[1]
+
+    def _refresh_staged(self) -> None:
+        if self._staged is None:
+            self.staged_label.setText("")
+            self.build_button.setEnabled(False)
+            return
+        self.staged_label.setText(f"{plural(len(self._staged[1]), 'row')} ready to plan")
+        self.build_button.setEnabled(True)
+
+    def _build_staged(self) -> None:
+        if self._staged is None:
+            return
+        listing, paths = self._staged
+        if self.build(listing, paths):
+            self._staged = None
+            self._refresh_staged()
 
     def _build_body(self, parent: QWidget) -> QWidget:
         body = QWidget(parent)
@@ -542,11 +701,11 @@ class PlanView(QWidget):
         the plan is drafted without it, and the draft's own warning says that
         moves have nowhere to go.
         """
-        spec = self._settings.target_drive().strip()
+        spec = self.target_drive()
         if not spec:
             return ()
         try:
-            return (planner.target_from_spec(spec, reserve=self._settings.reserve_bytes()),)
+            return (planner.target_from_spec(spec, reserve=self.reserve_bytes()),)
         except planner.PlannerError as exc:
             self.statusMessage.emit(f"Target {spec} cannot be used: {exc}")
             return ()
@@ -1165,6 +1324,9 @@ class PlanPage(QWidget):
     aiChanged = Signal()
     """A review ran: the shell re-reads the AI status and the meter (design §10)."""
 
+    targetChanged = Signal(str)
+    """The move target changed: the shell re-reads it for the ranked list's previews."""
+
     def __init__(
         self,
         data_root: Path | None = None,
@@ -1210,6 +1372,7 @@ class PlanPage(QWidget):
         self.plan.goToOpportunities.connect(self.goToOpportunities.emit)
         self.plan.built.connect(self._on_built)
         self.plan.aiChanged.connect(self.aiChanged.emit)
+        self.plan.targetChanged.connect(self.targetChanged.emit)
 
     # -- navigation ------------------------------------------------------- #
 
