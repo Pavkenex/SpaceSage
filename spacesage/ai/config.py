@@ -27,11 +27,9 @@ never rendered into a status view and never written back by :meth:`AIConfig.save
 from __future__ import annotations
 
 import ipaddress
-import json
 import os
 import re
 import stat
-import sys
 import tomllib
 import urllib.parse
 from collections.abc import Mapping, Sequence
@@ -39,6 +37,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from spacesage._util import PLATFORM, toml_number, toml_string
 from spacesage.ai.errors import INVALID_CONFIG, LOCAL_ONLY, AIError
 
 CONFIG_ENV_VAR = "SPACESAGE_AI_CONFIG"
@@ -230,7 +229,7 @@ def default_config_path(env: Mapping[str, str] | None = None) -> Path:
     override = environ.get(CONFIG_ENV_VAR)
     if override:
         return Path(override).expanduser()
-    return _config_home(environ, windows=sys.platform == "win32") / DEFAULT_CONFIG_NAME
+    return _config_home(environ, windows=PLATFORM == "win32") / DEFAULT_CONFIG_NAME
 
 
 def default_cache_dir(env: Mapping[str, str] | None = None) -> Path:
@@ -239,10 +238,10 @@ def default_cache_dir(env: Mapping[str, str] | None = None) -> Path:
     override = environ.get(CACHE_DIR_ENV_VAR)
     if override:
         return Path(override).expanduser()
-    if sys.platform == "win32":
+    if PLATFORM == "win32":
         base = environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
         return Path(base).expanduser() / APP_DIR_NAME / "ai-cache"
-    if sys.platform == "darwin":
+    if PLATFORM == "darwin":
         return Path.home() / "Library" / "Caches" / APP_DIR_NAME / "ai"
     xdg = environ.get("XDG_CACHE_HOME")
     root = Path(xdg).expanduser() if xdg else Path.home() / ".cache"
@@ -456,7 +455,7 @@ class ProviderConfig:
         if self.api_key_env and environ.get(self.api_key_env):
             return None
         path = Path(self.api_key_file).expanduser()
-        if sys.platform == "win32" or not path.is_file():
+        if PLATFORM == "win32" or not path.is_file():
             return None
         mode = path.stat().st_mode
         if mode & (stat.S_IRGRP | stat.S_IROTH | stat.S_IWGRP | stat.S_IWOTH):
@@ -520,40 +519,28 @@ class ProviderConfig:
 
     def render_toml(self) -> str:
         """The ``[[ai.providers]]`` table for this provider, deterministic."""
-        lines = ["[[ai.providers]]", f"name = {_toml_string(self.name)}"]
+        lines = ["[[ai.providers]]", f"name = {toml_string(self.name)}"]
         if self.kind != "custom":
-            lines.append(f"preset = {_toml_string(self.kind)}")
-        lines.append(f"base_url = {_toml_string(self.base_url)}")
-        lines.append(f"model = {_toml_string(self.model)}")
+            lines.append(f"preset = {toml_string(self.kind)}")
+        lines.append(f"base_url = {toml_string(self.base_url)}")
+        lines.append(f"model = {toml_string(self.model)}")
         if self.api_key_env:
-            lines.append(f"api_key_env = {_toml_string(self.api_key_env)}")
+            lines.append(f"api_key_env = {toml_string(self.api_key_env)}")
         if self.api_key_file:
-            lines.append(f"api_key_file = {_toml_string(self.api_key_file)}")
+            lines.append(f"api_key_file = {toml_string(self.api_key_file)}")
         if self.pricing_in is not None:
-            lines.append(f"pricing_in = {_toml_number(self.pricing_in)}")
+            lines.append(f"pricing_in = {toml_number(self.pricing_in)}")
         if self.pricing_out is not None:
-            lines.append(f"pricing_out = {_toml_number(self.pricing_out)}")
+            lines.append(f"pricing_out = {toml_number(self.pricing_out)}")
         if self.timeout_s != 60.0:
-            lines.append(f"timeout_s = {_toml_number(self.timeout_s)}")
+            lines.append(f"timeout_s = {toml_number(self.timeout_s)}")
         if not self.stream:
             lines.append("stream = false")
         if self.json_mode:
             lines.append("json_mode = true")
         for key, value in self.extra_headers.items():
-            lines.append(f"extra_headers.{key} = {_toml_string(value)}")
+            lines.append(f"extra_headers.{key} = {toml_string(value)}")
         return "\n".join(lines)
-
-
-def _toml_string(value: str) -> str:
-    """A TOML basic string (JSON escaping is a valid subset for our values)."""
-    return json.dumps(value, ensure_ascii=False)
-
-
-def _toml_number(value: float) -> str:
-    """A TOML number: integers stay integers, floats keep one decimal."""
-    if float(value).is_integer():
-        return str(int(value))
-    return repr(float(value))
 
 
 # --------------------------------------------------------------------------- #
@@ -817,19 +804,19 @@ class AIConfig:
             f"enabled = {_toml_bool(self.enabled)}",
         ]
         if self.default_provider:
-            lines.append(f"default_provider = {_toml_string(self.default_provider)}")
+            lines.append(f"default_provider = {toml_string(self.default_provider)}")
         lines.append(f"streaming = {_toml_bool(self.streaming)}")
         lines.append(f"redact_paths = {_toml_bool(self.redact_paths)}")
         lines.append(f"local_only = {_toml_bool(self.local_only)}")
         lines.append(f"cache = {_toml_bool(self.cache)}")
         if self.cache_dir:
-            lines.append(f"cache_dir = {_toml_string(self.cache_dir)}")
+            lines.append(f"cache_dir = {toml_string(self.cache_dir)}")
         lines.append(f"retries = {self.retries}")
         lines.append(f"batch_size = {self.batch_size}")
         lines.append(f"max_items = {self.max_items}")
         lines.append(f"max_prompt_chars = {self.max_prompt_chars}")
         lines.append(f"max_tokens = {self.max_tokens}")
-        lines.append(f"temperature = {_toml_number(self.temperature)}")
+        lines.append(f"temperature = {toml_number(self.temperature)}")
         for provider in self.providers:
             lines.append("")
             lines.append(provider.render_toml())
@@ -948,7 +935,7 @@ class AIConfig:
         text = self.render_toml()
         tmp = target.with_name(target.name + ".tmp")
         tmp.write_text(text, encoding="utf-8")
-        if sys.platform != "win32":
+        if PLATFORM != "win32":
             os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
         os.replace(tmp, target)
         return target

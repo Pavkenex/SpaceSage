@@ -49,6 +49,7 @@ from pathlib import Path
 from spacesage import planner
 
 from . import posix, win
+from ._fields import optional_str, required_str
 from .backend import (
     DEFAULT_CONTENT_LIMIT,
     QUARANTINE_DIRNAME,
@@ -293,22 +294,6 @@ class _Action:
     advisory: bool
 
 
-def _text(entry: Mapping[str, object], key: str, *, where: str) -> str:
-    value = entry.get(key)
-    if not isinstance(value, str) or not value:
-        raise ExecutorError(f"{where}: {key!r} must be a non-empty string (got {value!r})")
-    return value
-
-
-def _maybe_text(entry: Mapping[str, object], key: str, *, where: str) -> str | None:
-    value = entry.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value:
-        raise ExecutorError(f"{where}: {key!r} must be a non-empty string or null (got {value!r})")
-    return value
-
-
 def _plan_mapping(plan: planner.Plan | Mapping[str, object]) -> Mapping[str, object]:
     if isinstance(plan, planner.Plan):
         return plan.to_dict()
@@ -330,7 +315,7 @@ def _plan_actions(plan_data: Mapping[str, object]) -> tuple[_Action, ...]:
         if not isinstance(entry, Mapping):
             raise ExecutorError(f"actions[{index}] must be an object")
         where = f"actions[{index}]"
-        action_type = _text(entry, "type", where=where)
+        action_type = required_str(entry, "type", where=where)
         if action_type not in planner.TYPES:
             raise ExecutorError(f"{where}: unknown action type {action_type!r}")
         size = entry.get("bytes")
@@ -338,14 +323,14 @@ def _plan_actions(plan_data: Mapping[str, object]) -> tuple[_Action, ...]:
             raise ExecutorError(f"{where}: 'bytes' must be an integer (got {size!r})")
         actions.append(
             _Action(
-                id=_text(entry, "id", where=where),
+                id=required_str(entry, "id", where=where),
                 type=action_type,
-                path=_text(entry, "path", where=where),
+                path=required_str(entry, "path", where=where),
                 bytes=size,
-                tier=_text(entry, "tier", where=where),
-                dest=_maybe_text(entry, "dest", where=where),
-                link=_maybe_text(entry, "link_after", where=where),
-                why=_maybe_text(entry, "why", where=where) or "",
+                tier=required_str(entry, "tier", where=where),
+                dest=optional_str(entry, "dest", where=where),
+                link=optional_str(entry, "link_after", where=where),
+                why=optional_str(entry, "why", where=where) or "",
                 advisory=action_type in planner.ADVISORY_TYPES,
             )
         )

@@ -28,6 +28,7 @@ from pathlib import Path
 
 from spacesage import __version__
 
+from ._fields import optional_str, required_str
 from .backend import (
     DEFAULT_CONTENT_LIMIT,
     Backend,
@@ -506,9 +507,9 @@ def read_journal(path: str | os.PathLike[str]) -> Journal:
         if not isinstance(record, dict):
             raise ExecutorError(f"{journal_path}:{number}: record must be an object")
         where = f"{journal_path}:{number}"
-        if _text(record, "schema", where=where) != JOURNAL_SCHEMA:
+        if required_str(record, "schema", where=where) != JOURNAL_SCHEMA:
             raise ExecutorError(f"{where}: schema must be {JOURNAL_SCHEMA!r}")
-        kind = _text(record, "kind", where=where)
+        kind = required_str(record, "kind", where=where)
         if kind == KIND_RUN:
             runs[_int(record, "run", where=where)] = record
         elif kind == KIND_OP:
@@ -528,7 +529,7 @@ def read_journal(path: str | os.PathLike[str]) -> Journal:
 def _merge(into: dict[int, dict[str, object]], record: Mapping[str, object], *, where: str) -> None:
     """Merge a start/end pair of records under one sequence number."""
     seq = _int(record, "seq", where=where)
-    phase = _text(record, "phase", where=where)
+    phase = required_str(record, "phase", where=where)
     if phase not in (PHASE_START, PHASE_END):
         raise ExecutorError(f"{where}: phase must be 'start' or 'end' (got {phase!r})")
     merged = into.setdefault(seq, {})
@@ -545,13 +546,13 @@ def _run(record: Mapping[str, object]) -> JournalRun:
     where = "run record"
     return JournalRun(
         run=_int(record, "run", where=where),
-        at=_text(record, "at", where=where),
-        mode=_text(record, "mode", where=where),
-        plan_id=_optional_text(record, "plan_id", where=where),
-        plan=_optional_text(record, "plan", where=where),
-        manifest=_optional_text(record, "manifest", where=where),
-        backend=_optional_text(record, "backend", where=where) or "",
-        quarantined_to=_optional_text(record, "quarantine_root", where=where),
+        at=required_str(record, "at", where=where),
+        mode=required_str(record, "mode", where=where),
+        plan_id=optional_str(record, "plan_id", where=where),
+        plan=optional_str(record, "plan", where=where),
+        manifest=optional_str(record, "manifest", where=where),
+        backend=optional_str(record, "backend", where=where) or "",
+        quarantined_to=optional_str(record, "quarantine_root", where=where),
     )
 
 
@@ -560,16 +561,16 @@ def _op(seq: int, record: Mapping[str, object]) -> JournalOp:
     return JournalOp(
         seq=seq,
         run=_int(record, "run", where=where),
-        at=_text(record, "at", where=where),
-        action_id=_text(record, "action_id", where=where),
-        type=_optional_text(record, "type", where=where) or "",
-        op=_text(record, "op", where=where),
-        outcome=_text(record, "outcome", where=where),
+        at=required_str(record, "at", where=where),
+        action_id=required_str(record, "action_id", where=where),
+        type=optional_str(record, "type", where=where) or "",
+        op=required_str(record, "op", where=where),
+        outcome=required_str(record, "outcome", where=where),
         reason=_maybe_blank(record, "reason", where=where),
         bytes=_int(record, "bytes", where=where),
-        src=_text(record, "src", where=where),
-        dest=_optional_text(record, "dest", where=where),
-        link=_optional_text(record, "link", where=where),
+        src=required_str(record, "src", where=where),
+        dest=optional_str(record, "dest", where=where),
+        link=optional_str(record, "link", where=where),
         verify=_maybe_blank(record, "verify", where=where),
         notes=_texts(record, "notes", where=where),
         before=_digest(record, "before", where=where),
@@ -583,34 +584,18 @@ def _undo(seq: int, record: Mapping[str, object]) -> JournalUndo:
     return JournalUndo(
         seq=seq,
         run=_int(record, "run", where=where),
-        at=_text(record, "at", where=where),
+        at=required_str(record, "at", where=where),
         op_ref=_int(record, "op_ref", where=where),
-        action_id=_text(record, "action_id", where=where),
-        op=_text(record, "op", where=where),
-        outcome=_text(record, "outcome", where=where),
+        action_id=required_str(record, "action_id", where=where),
+        op=required_str(record, "op", where=where),
+        outcome=required_str(record, "outcome", where=where),
         reason=_maybe_blank(record, "reason", where=where),
-        src=_text(record, "src", where=where),
-        dest=_optional_text(record, "dest", where=where),
+        src=required_str(record, "src", where=where),
+        dest=optional_str(record, "dest", where=where),
         verify=_maybe_blank(record, "verify", where=where),
         notes=_texts(record, "notes", where=where),
         finished=bool(record.get("finished", True)),
     )
-
-
-def _text(record: Mapping[str, object], key: str, *, where: str) -> str:
-    value = record.get(key)
-    if not isinstance(value, str) or not value:
-        raise ExecutorError(f"{where}: {key!r} must be a non-empty string (got {value!r})")
-    return value
-
-
-def _optional_text(record: Mapping[str, object], key: str, *, where: str) -> str | None:
-    value = record.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value:
-        raise ExecutorError(f"{where}: {key!r} must be a non-empty string or null (got {value!r})")
-    return value
 
 
 def _maybe_blank(record: Mapping[str, object], key: str, *, where: str) -> str:

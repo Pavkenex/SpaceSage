@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from spacesage import (
     __version__,
@@ -28,12 +29,17 @@ from spacesage import (
     rules,
     stats,
 )
+from spacesage._cliargs import kind_list, size_arg
 from spacesage.ai import cli as ai_cli
 from spacesage.ingest import IngestError, IngestProgress, RunStats, ingest_csv
 
 PROG = "spacesage"
 DESCRIPTION = "Turn a WizTree export into a safety-gated course of action for a full disk."
 EPILOG = "The product is the desktop app; this CLI is a development and automation surface."
+
+if TYPE_CHECKING:  # the argparse action type is not subscriptable at runtime
+    _SubParsers = argparse._SubParsersAction[argparse.ArgumentParser]
+    """What ``add_subparsers`` returns, as every registration helper receives it."""
 
 
 class _ProgressPrinter:
@@ -58,6 +64,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"{PROG} {__version__}")
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")
 
+    _add_deepscan_parser(subparsers)
+    _add_ingest_parser(subparsers)
+    _add_stats_parser(subparsers)
+    _add_classify_parser(subparsers)
+    _add_candidates_parser(subparsers)
+    _add_plan_parser(subparsers)
+    _add_apply_parser(subparsers)
+    _add_undo_parser(subparsers)
+    ai_cli.add_ai_commands(subparsers)
+    return parser
+
+
+# --------------------------------------------------------------------------- #
+# Command registration (one helper per subcommand, in help order)
+# --------------------------------------------------------------------------- #
+
+
+def _add_deepscan_parser(subparsers: _SubParsers) -> None:
+    """Register ``deepscan`` (read-only duplicate verification)."""
     deepscan_parser = subparsers.add_parser(
         "deepscan",
         help="hash-verify exact duplicate files on the live filesystem (read-only)",
@@ -80,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     deepscan_parser.add_argument(
         "--min-size",
-        type=_size_arg,
+        type=size_arg,
         default=deepscan.DEFAULT_MIN_SIZE,
         metavar="SIZE",
         help="ignore files smaller than this (bytes or '1 MiB'); default: %(default)s",
@@ -103,6 +128,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="print progress lines to stderr while walking and hashing",
     )
     deepscan_parser.set_defaults(handler=_run_deepscan)
+
+
+def _add_ingest_parser(subparsers: _SubParsers) -> None:
+    """Register ``ingest`` (CSV export into the SQLite index)."""
 
     ingest = subparsers.add_parser(
         "ingest",
@@ -131,6 +160,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="print progress lines to stderr while loading",
     )
     ingest.set_defaults(handler=_run_ingest)
+
+
+def _add_stats_parser(subparsers: _SubParsers) -> None:
+    """Register ``stats`` (aggregate an index)."""
 
     stats_parser = subparsers.add_parser(
         "stats",
@@ -172,6 +205,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="also rebuild the derived dir_sizes/app_footprints tables (writes to the index)",
     )
     stats_parser.set_defaults(handler=_run_stats)
+
+
+def _add_classify_parser(subparsers: _SubParsers) -> None:
+    """Register ``classify`` (rule-pack verdicts)."""
 
     classify_parser = subparsers.add_parser(
         "classify",
@@ -230,6 +267,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     classify_parser.set_defaults(handler=_run_classify)
 
+
+def _add_candidates_parser(subparsers: _SubParsers) -> None:
+    """Register ``candidates`` (the ranked opportunities)."""
+
     candidates_parser = subparsers.add_parser(
         "candidates",
         help="rank the opportunities per action kind (delete/move/stale/dupes/app)",
@@ -256,7 +297,7 @@ def build_parser() -> argparse.ArgumentParser:
     candidates_parser.add_argument(
         "--kind",
         action="append",
-        type=_kind_list,
+        type=kind_list,
         metavar="KIND",
         help=(
             f"only this candidate kind; repeat or comma-separate "
@@ -266,7 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     candidates_parser.add_argument(
         "--min-size",
-        type=_size_arg,
+        type=size_arg,
         default=candidates.DEFAULT_MIN_SIZE,
         metavar="SIZE",
         help="ignore entries smaller than this (bytes or '100 MiB'); default: %(default)s",
@@ -310,6 +351,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     candidates_parser.set_defaults(handler=_run_candidates)
 
+
+def _add_plan_parser(subparsers: _SubParsers) -> None:
+    """Register ``plan`` (compose the course of action)."""
+
     plan_parser = subparsers.add_parser(
         "plan",
         help="compose the ranked candidates into plan.json v1 (the course of action)",
@@ -348,14 +393,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     plan_parser.add_argument(
         "--reserve",
-        type=_size_arg,
+        type=size_arg,
         default=planner.DEFAULT_RESERVE,
         metavar="SIZE",
         help="free space to keep untouched on every target; default: %(default)s",
     )
     plan_parser.add_argument(
         "--free",
-        type=_size_arg,
+        type=size_arg,
         default=None,
         metavar="SIZE",
         help=(
@@ -365,7 +410,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     plan_parser.add_argument(
         "--min-size",
-        type=_size_arg,
+        type=size_arg,
         default=candidates.DEFAULT_MIN_SIZE,
         metavar="SIZE",
         help="ignore entries smaller than this (bytes or '100 MiB'); default: %(default)s",
@@ -421,6 +466,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="write plan.json to FILE ('-' writes it next to stdout as well)",
     )
     plan_parser.set_defaults(handler=_run_plan)
+
+
+def _add_apply_parser(subparsers: _SubParsers) -> None:
+    """Register ``apply`` (execute an approved plan)."""
 
     apply_parser = subparsers.add_parser(
         "apply",
@@ -484,6 +533,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     apply_parser.set_defaults(handler=_run_apply)
 
+
+def _add_undo_parser(subparsers: _SubParsers) -> None:
+    """Register ``undo`` (reverse a journal)."""
+
     undo_parser = subparsers.add_parser(
         "undo",
         help="reverse a journal, newest operation first",
@@ -504,30 +557,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="emit the undo report as JSON (spacesage.undo/v1)",
     )
     undo_parser.set_defaults(handler=_run_undo)
-
-    ai_cli.add_ai_commands(subparsers)
-    return parser
-
-
-def _kind_list(value: str) -> tuple[str, ...]:
-    """Parse a ``--kind`` value: one kind, or a comma-separated list of them."""
-    parts = tuple(part.strip() for part in value.split(",") if part.strip())
-    if not parts:
-        raise argparse.ArgumentTypeError("expected at least one kind")
-    unknown = [part for part in parts if part not in candidates.KINDS]
-    if unknown:
-        raise argparse.ArgumentTypeError(
-            f"unknown kind(s) {', '.join(unknown)}; pick from {', '.join(candidates.KINDS)}"
-        )
-    return parts
-
-
-def _size_arg(value: str) -> int:
-    """Parse a ``--min-size`` value with :func:`spacesage.rules.parse_size`."""
-    try:
-        return rules.parse_size(value)
-    except rules.RulesError as exc:
-        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def _moment_arg(value: str) -> float:

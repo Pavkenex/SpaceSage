@@ -27,6 +27,8 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from spacesage import candidates, db, executor, opportunities, rules, stats
+from spacesage._cliargs import kind_list, size_arg
+from spacesage._util import ext_of
 from spacesage.ai import (
     AIConfig,
     AIEngine,
@@ -123,7 +125,7 @@ def add_ai_commands(subparsers: argparse._SubParsersAction[argparse.ArgumentPars
     suggest.add_argument(
         "--kind",
         action="append",
-        type=_kind_list,
+        type=kind_list,
         metavar="KIND",
         help=(
             "only rows of this candidate kind; repeat or comma-separate "
@@ -132,7 +134,7 @@ def add_ai_commands(subparsers: argparse._SubParsersAction[argparse.ArgumentPars
     )
     suggest.add_argument(
         "--min-size",
-        type=_size_arg,
+        type=size_arg,
         default=candidates.DEFAULT_MIN_SIZE,
         metavar="SIZE",
         help="ignore entries smaller than this (bytes or '100 MiB'); default: %(default)s",
@@ -281,27 +283,6 @@ def _add_engine_options(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="send path tokens instead of real paths (answers are mapped back locally)",
     )
-
-
-def _kind_list(value: str) -> tuple[str, ...]:
-    """Parse a ``--kind`` value: one kind, or a comma-separated list of them."""
-    parts = tuple(part.strip() for part in value.split(",") if part.strip())
-    if not parts:
-        raise argparse.ArgumentTypeError("expected at least one kind")
-    unknown = [part for part in parts if part not in candidates.KINDS]
-    if unknown:
-        raise argparse.ArgumentTypeError(
-            f"unknown kind(s) {', '.join(unknown)}; pick from {', '.join(candidates.KINDS)}"
-        )
-    return parts
-
-
-def _size_arg(value: str) -> int:
-    """Parse a ``--min-size`` value with :func:`spacesage.rules.parse_size`."""
-    try:
-        return rules.parse_size(value)
-    except rules.RulesError as exc:
-        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 # --------------------------------------------------------------------------- #
@@ -727,16 +708,7 @@ def _bare_facts(path: str) -> ItemFacts:
         age_days = max(0, int((time.time() - info.st_mtime) // 86_400))
     except OSError:
         pass
-    return ItemFacts(path=path, is_dir=is_dir, size=size, ext=_ext_of(path), age_days=age_days)
-
-
-def _ext_of(path: str) -> str | None:
-    """Lower-case extension without the dot (``None`` when there is none)."""
-    name = path.replace("\\", "/").rsplit("/", 1)[-1]
-    if "." not in name[1:]:
-        return None
-    ext = name.rsplit(".", 1)[-1].lower()
-    return ext or None
+    return ItemFacts(path=path, is_dir=is_dir, size=size, ext=ext_of(path), age_days=age_days)
 
 
 def _plan_actions(plan: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:

@@ -56,7 +56,6 @@ import json
 import os
 import re
 import sqlite3
-import sys
 import time
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -66,6 +65,7 @@ from pathlib import Path
 from typing import Any
 
 from spacesage import db, stats
+from spacesage._util import PLATFORM, iso_utc, plural
 
 BUILTIN_RULES_DIR = Path(__file__).resolve().parent / "rules"
 """Directory holding the built-in rule packs shipped with the package."""
@@ -266,7 +266,7 @@ def _match_key(path: str) -> str:
     return path.lower().replace("/", "\\")
 
 
-def _path_components(pattern: str) -> set[str]:
+def _glob_literals(pattern: str) -> set[str]:
     """Lower-cased literal components of a glob (wildcard parts dropped)."""
     out: set[str] = set()
     for part in re.split(r"[\\/]", pattern):
@@ -283,7 +283,7 @@ def _required_components(paths: Sequence[str]) -> tuple[frozenset[str], ...]:
     that pattern, so a rule is only a candidate when at least one set is
     contained in the entry's components.  An empty set means "no information".
     """
-    return tuple(frozenset(_path_components(pattern)) for pattern in paths)
+    return tuple(frozenset(_glob_literals(pattern)) for pattern in paths)
 
 
 # --------------------------------------------------------------------------- #
@@ -718,7 +718,7 @@ def default_rules_dir(env: Mapping[str, str] | None = None) -> Path:
     override = environ.get(RULES_ENV_VAR)
     if override:
         return Path(override).expanduser()
-    if sys.platform == "win32":
+    if PLATFORM == "win32":
         base = environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
         return Path(base).expanduser() / "spacesage" / "rules"
     xdg = environ.get("XDG_CONFIG_HOME")
@@ -1082,7 +1082,7 @@ class ClassifyReport:
         totals = self.totals
         return {
             "schema": "spacesage.classify/v1",
-            "generated": _iso(self.generated),
+            "generated": iso_utc(self.generated),
             "index": {"db": self.db_path, "schema_version": self.schema_version},
             "rules": {
                 "count": self.rules.rules,
@@ -1149,10 +1149,6 @@ class ClassifyReport:
                 ],
             },
         }
-
-
-def _iso(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat(timespec="seconds")
 
 
 class _TopEntries:
@@ -1447,7 +1443,7 @@ def build_categories(
             conn,
             {
                 "classify.built_entries": entries,
-                "classify.built_at": _iso(built_at),
+                "classify.built_at": iso_utc(built_at),
                 "classify.matched": matched,
                 "classify.unknown": entries - matched,
                 "classify.rules_sha256": fingerprint,
@@ -1478,10 +1474,6 @@ def _insert_categories(conn: sqlite3.Connection, rows: list[tuple[object, ...]])
 # --------------------------------------------------------------------------- #
 
 
-def _plural(count: int, singular: str, plural: str | None = None) -> str:
-    return f"{count} {singular if count == 1 else (plural or singular + 's')}"
-
-
 def _section(title: str) -> str:
     return f"\n{title}:"
 
@@ -1491,7 +1483,7 @@ def render_rules(rules: RuleSet) -> str:
     packs = f"{len(rules.builtin_packs)} built-in"
     if rules.user_packs:
         packs += f" + {len(rules.user_packs)} user"
-    lines = [f"rules: {_plural(len(rules.rules), 'rule')} ({packs} packs)"]
+    lines = [f"rules: {plural(len(rules.rules), 'rule')} ({packs} packs)"]
     if rules.shadowed:
         lines.append(f"shadowed: {', '.join(rules.shadowed)}")
     lines.append("")
@@ -1519,36 +1511,36 @@ def render_text(report: ClassifyReport) -> str:
     """Render the report as compact plain text."""
     rules = report.rules
     totals = report.totals
-    packs = f"{_plural(len(rules.builtin_packs), 'built-in pack')}"
+    packs = f"{plural(len(rules.builtin_packs), 'built-in pack')}"
     if rules.user_packs:
-        packs += f" + {_plural(len(rules.user_packs), 'user pack')}"
+        packs += f" + {plural(len(rules.user_packs), 'user pack')}"
     lines = [
         f"index: {report.db_path or '(index)'} (schema v{report.schema_version})",
-        f"rules: {_plural(rules.rules, 'rule')} from {packs} "
-        f"({_plural(rules.categories, 'category', 'categories')})",
+        f"rules: {plural(rules.rules, 'rule')} from {packs} "
+        f"({plural(rules.categories, 'category', 'categories')})",
     ]
     if rules.shadowed:
         lines.append(
-            f"shadowed: {_plural(len(rules.shadowed), 'built-in rule')} replaced by user rules: "
+            f"shadowed: {plural(len(rules.shadowed), 'built-in rule')} replaced by user rules: "
             f"{', '.join(rules.shadowed)}"
         )
     lines.append(
-        f"entries: {_plural(totals.entries, 'entry', 'entries')} classified "
-        f"({_plural(totals.files, 'file')}, {_plural(totals.dirs, 'dir')}): "
+        f"entries: {plural(totals.entries, 'entry', 'entries')} classified "
+        f"({plural(totals.files, 'file')}, {plural(totals.dirs, 'dir')}): "
         f"{totals.matched} matched ({totals.matched_ratio:.1%}), "
-        f"{_plural(totals.unknown, 'entry', 'entries')} unknown"
+        f"{plural(totals.unknown, 'entry', 'entries')} unknown"
     )
     lines.append(
         f"unknown: {stats.format_bytes(totals.unknown_bytes)} across "
-        f"{_plural(totals.unknown, 'entry', 'entries')} "
+        f"{plural(totals.unknown, 'entry', 'entries')} "
         f"({stats.format_bytes(totals.unknown_file_bytes)} in files)"
     )
 
     lines.append(_section("tiers"))
     for tier in report.tiers:
         line = (
-            f"  {tier.tier:<3} {_plural(tier.entries, 'entry', 'entries'):>14}  "
-            f"{_plural(tier.files, 'file'):>10}  {_plural(tier.dirs, 'dir'):>8}  "
+            f"  {tier.tier:<3} {plural(tier.entries, 'entry', 'entries'):>14}  "
+            f"{plural(tier.files, 'file'):>10}  {plural(tier.dirs, 'dir'):>8}  "
             f"{stats.format_bytes(tier.file_bytes):>10}"
         )
         if tier.dir_bytes:
@@ -1560,8 +1552,8 @@ def render_text(report: ClassifyReport) -> str:
     for category in report.categories:
         line = (
             f"  {stats.format_bytes(category.file_bytes):>10}  {category.category:<22} "
-            f"{category.tier:<3} {category.action:<18} {_plural(category.files, 'file'):>10}  "
-            f"{_plural(category.dirs, 'dir'):>8}"
+            f"{category.tier:<3} {category.action:<18} {plural(category.files, 'file'):>10}  "
+            f"{plural(category.dirs, 'dir'):>8}"
         )
         if category.dir_bytes:
             line += f"  (+{stats.format_bytes(category.dir_bytes)} in folders)"

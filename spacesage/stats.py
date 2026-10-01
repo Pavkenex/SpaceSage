@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from spacesage import db
+from spacesage._util import iso_utc, plural
 
 DEFAULT_TOP = 20
 """Rows per ranked list in :func:`stats_report`."""
@@ -246,7 +247,7 @@ class StatsReport:
         """JSON-ready mapping (``spacesage.stats/v1``)."""
         return {
             "schema": "spacesage.stats/v1",
-            "generated": _iso(self.generated),
+            "generated": iso_utc(self.generated),
             "index": {
                 "db": self.db_path,
                 "schema_version": self.schema_version,
@@ -284,7 +285,7 @@ class StatsReport:
                 ],
             },
             "top": self.top,
-            "as_of": _iso(datetime.fromtimestamp(self.age_as_of, tz=UTC)),
+            "as_of": iso_utc(datetime.fromtimestamp(self.age_as_of, tz=UTC)),
             "dirs": {
                 "listed": len(self.dirs),
                 "total_dirs": self.totals.dirs,
@@ -310,7 +311,7 @@ class StatsReport:
                 ],
             },
             "age_buckets": {
-                "as_of": _iso(datetime.fromtimestamp(self.age_as_of, tz=UTC)),
+                "as_of": iso_utc(datetime.fromtimestamp(self.age_as_of, tz=UTC)),
                 "items": [
                     {
                         "bucket": item.label,
@@ -345,10 +346,6 @@ class StatsReport:
                 ],
             },
         }
-
-
-def _iso(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat(timespec="seconds")
 
 
 def _dir_dict(size: DirSize) -> dict[str, object]:
@@ -768,14 +765,14 @@ def age_buckets(
 # --------------------------------------------------------------------------- #
 
 
-def _path_components(path: str) -> tuple[str, ...]:
+def _split_path(path: str) -> tuple[str, ...]:
     """Split a stored path into components (``C:\\A\\B`` -> ``("C:", "A", "B")``)."""
     return tuple(part for part in _SEPARATOR_RE.split(path) if part)
 
 
 def _is_app_root(path: str) -> bool:
     """True when ``path`` ends with one of :data:`APP_ROOT_COMPONENTS`."""
-    components = _path_components(path)
+    components = _split_path(path)
     for spec in APP_ROOT_COMPONENTS:
         if (
             len(components) >= len(spec)
@@ -844,7 +841,7 @@ class AppScan:
         """Attribute one folder to an application when its parent is a root."""
         if size.parent_id is None or size.parent_id not in self._roots:
             return
-        components = _path_components(size.path)
+        components = _split_path(size.path)
         name = components[-1] if components else size.path
         accumulator = self._apps.get(name.lower())
         if accumulator is None:
@@ -1028,7 +1025,7 @@ def build_derived(conn: sqlite3.Connection) -> DerivedStats:
             ],
         )
         db.meta_set(conn, "stats.built_entries", db.entry_count(conn))
-        db.meta_set(conn, "stats.built_at", _iso(built_at))
+        db.meta_set(conn, "stats.built_at", iso_utc(built_at))
     except BaseException:
         conn.rollback()
         raise
@@ -1066,10 +1063,6 @@ def format_bytes(value: int) -> str:
     return f"{sign}{size:.1f} {unit}"
 
 
-def _plural(count: int, singular: str, plural: str | None = None) -> str:
-    return f"{count} {singular if count == 1 else (plural or singular + 's')}"
-
-
 def _section(title: str) -> str:
     return f"\n{title}:"
 
@@ -1093,19 +1086,19 @@ def render_text(report: StatsReport, *, by: str | None = None) -> str:
         else ", allocated data not in export"
     )
     lines.append(
-        f"totals: {_plural(totals_row.dirs, 'dir')}, {_plural(totals_row.files, 'file')}, "
+        f"totals: {plural(totals_row.dirs, 'dir')}, {plural(totals_row.files, 'file')}, "
         f"{format_bytes(totals_row.file_bytes)} logical "
         f"({format_bytes(totals_row.unique_file_bytes)} unique){allocated}"
     )
     if totals_row.hardlink_files:
         unique_files = totals_row.files - totals_row.hardlink_files
         lines.append(
-            f"hardlinks: {_plural(totals_row.hardlink_files, 'file')} "
-            f"({_plural(unique_files, 'file')} count their bytes)"
+            f"hardlinks: {plural(totals_row.hardlink_files, 'file')} "
+            f"({plural(unique_files, 'file')} count their bytes)"
         )
     if report.unattributed_files:
         lines.append(
-            f"unattributed: {_plural(report.unattributed_files, 'file')}, "
+            f"unattributed: {plural(report.unattributed_files, 'file')}, "
             f"{format_bytes(report.unattributed_bytes)} without a folder row"
         )
 
@@ -1113,8 +1106,8 @@ def render_text(report: StatsReport, *, by: str | None = None) -> str:
     if quality.warnings:
         verb = "disagrees" if len(quality.warnings) == 1 else "disagree"
         lines.append(
-            f"data quality: {_plural(len(quality.warnings), 'folder')} {verb} with file-row "
-            f"sums (checked {_plural(quality.checked_dirs, 'folder')}, tolerance "
+            f"data quality: {plural(len(quality.warnings), 'folder')} {verb} with file-row "
+            f"sums (checked {plural(quality.checked_dirs, 'folder')}, tolerance "
             f"{format_bytes(quality.tolerance_bytes)} / {quality.tolerance_ratio:.1%})"
         )
         for warning in quality.warnings[:5]:
@@ -1128,7 +1121,7 @@ def render_text(report: StatsReport, *, by: str | None = None) -> str:
             lines.append(f"  ... {len(quality.warnings) - 5} more")
     else:
         lines.append(
-            f"data quality: ok ({_plural(quality.checked_dirs, 'folder')} checked, tolerance "
+            f"data quality: ok ({plural(quality.checked_dirs, 'folder')} checked, tolerance "
             f"{format_bytes(quality.tolerance_bytes)} / {quality.tolerance_ratio:.1%})"
         )
 
@@ -1138,8 +1131,8 @@ def render_text(report: StatsReport, *, by: str | None = None) -> str:
         for dir_size in report.dirs:
             lines.append(
                 f"  {format_bytes(dir_size.bytes):>10}  {dir_size.path}  "
-                f"[{_plural(dir_size.file_count, 'file')}, "
-                f"{_plural(dir_size.dir_count, 'dir')}]"
+                f"[{plural(dir_size.file_count, 'file')}, "
+                f"{plural(dir_size.dir_count, 'dir')}]"
             )
         lines.append(_section(f"top files ({len(report.files)})"))
         for file_row in report.files:
@@ -1153,14 +1146,14 @@ def render_text(report: StatsReport, *, by: str | None = None) -> str:
             label = ext_total.ext or "(none)"
             lines.append(
                 f"  {format_bytes(ext_total.bytes):>10}  {label:<10} "
-                f"{_plural(ext_total.files, 'file')}"
+                f"{plural(ext_total.files, 'file')}"
             )
 
     if by in (None, "age"):
-        stamp = _iso(datetime.fromtimestamp(report.age_as_of, tz=UTC))
+        stamp = iso_utc(datetime.fromtimestamp(report.age_as_of, tz=UTC))
         lines.append(_section(f"age buckets (as of {stamp})"))
         for bucket in report.age:
-            counts = _plural(bucket.files, "file")
+            counts = plural(bucket.files, "file")
             lines.append(f"  {bucket.label:<10} {counts:>12}  {format_bytes(bucket.bytes):>10}")
 
     if by in (None, "app"):
@@ -1170,7 +1163,7 @@ def render_text(report: StatsReport, *, by: str | None = None) -> str:
             root = app.roots[0] if app.roots else "(unknown)"
             lines.append(
                 f"  {format_bytes(app.bytes):>10}  {app.app:<20} "
-                f"{_plural(app.file_count, 'file')}  [{root}{extra}]"
+                f"{plural(app.file_count, 'file')}  [{root}{extra}]"
             )
     return "\n".join(lines) + "\n"
 

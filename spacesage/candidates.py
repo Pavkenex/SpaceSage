@@ -83,6 +83,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from spacesage import db, rules, stats
+from spacesage._util import iso_utc, plural
 
 KINDS: tuple[str, ...] = ("delete", "move", "stale", "dupes-weak", "app")
 """Candidate kinds, in claim order (higher kinds win a contested path)."""
@@ -434,7 +435,7 @@ class CandidateReport:
         listed = sum(len(block.candidates) for block in self.kinds)
         return {
             "schema": "spacesage.candidates/v1",
-            "generated": _iso(self.generated),
+            "generated": iso_utc(self.generated),
             "index": {"db": self.db_path, "schema_version": self.schema_version},
             "rules": {
                 "count": self.rules.rules,
@@ -443,7 +444,7 @@ class CandidateReport:
                 "shadowed": list(self.rules.shadowed),
                 "fingerprint": self.rules.fingerprint,
             },
-            "as_of": _iso(datetime.fromtimestamp(self.as_of, tz=UTC)),
+            "as_of": iso_utc(datetime.fromtimestamp(self.as_of, tz=UTC)),
             "thresholds": {
                 "min_size": self.min_size,
                 "stale_after_days": self.stale_after_days,
@@ -460,10 +461,6 @@ class CandidateReport:
             },
             "kinds": [block.to_dict() for block in self.kinds],
         }
-
-
-def _iso(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat(timespec="seconds")
 
 
 # --------------------------------------------------------------------------- #
@@ -510,10 +507,6 @@ def parent_path(path: str) -> str | None:
 _path_key = path_key
 _under_any = under
 _parent_path = parent_path
-
-
-def _plural(count: int, singular: str, plural: str | None = None) -> str:
-    return f"{count} {singular if count == 1 else (plural or singular + 's')}"
 
 
 def action_label(action: str) -> str:
@@ -705,7 +698,7 @@ class _MoveGroup:
         confidence = min(item.confidence for item in self.advice.values())
         age = _age_days(self.newest_mtime, moment)
         rationale = (
-            f"{_plural(self.member_count, 'file')} here ({stats.format_bytes(self.bytes)}) "
+            f"{plural(self.member_count, 'file')} here ({stats.format_bytes(self.bytes)}) "
             f"match the {category} advice: {advice.rationale}"
         )
         members = tuple(path for _size, path in sorted(self.members, reverse=True))
@@ -773,7 +766,7 @@ def _app_advice(
         category = rules.UNKNOWN_CATEGORY
         reason = (
             f"{footprint.app} uses {stats.format_bytes(footprint.bytes)} across "
-            f"{_plural(len(footprint.roots), 'folder')}, largest {largest}; no rule matched any "
+            f"{plural(len(footprint.roots), 'folder')}, largest {largest}; no rule matched any "
             "of them, so SpaceSage has no advice for it."
         )
         native = None
@@ -787,7 +780,7 @@ def _app_advice(
         category = matched.category
         reason = (
             f"{footprint.app} uses {stats.format_bytes(footprint.bytes)} across "
-            f"{_plural(len(footprint.roots), 'folder')}, largest {largest}; the biggest match "
+            f"{plural(len(footprint.roots), 'folder')}, largest {largest}; the biggest match "
             f"inside is {matched.path} ({category}): {matched.rationale}"
         )
         native = matched.native
@@ -846,7 +839,7 @@ def _dupes_candidates(
         age = _age_days(mtime, moment)
         copy_count = int(copies)
         rationale = (
-            f"same name and size as {_plural(copy_count - 1, 'other file')} ({sample}, "
+            f"same name and size as {plural(copy_count - 1, 'other file')} ({sample}, "
             f"{stats.format_bytes(int(size))} each, {stats.format_bytes(int(total))} combined); "
             "the bytes are not verified -- confirm the copies are identical before deleting or "
             "linking any of them."
@@ -1151,9 +1144,9 @@ def _member_marker(candidate: Candidate) -> str:
             f"{stats.format_bytes(candidate.member_bytes)} combined)"
         )
     if candidate.group == GROUP_FOLDER:
-        return f"  ({_plural(candidate.member_count, 'file')} in this folder)"
+        return f"  ({plural(candidate.member_count, 'file')} in this folder)"
     if candidate.kind == "app":
-        return f"  [{candidate.group}, {_plural(candidate.member_count, 'root')}]"
+        return f"  [{candidate.group}, {plural(candidate.member_count, 'root')}]"
     return ""
 
 
@@ -1162,9 +1155,8 @@ def render_text(report: CandidateReport) -> str:
     listed = sum(len(block.candidates) for block in report.kinds)
     lines = [
         f"index: {report.db_path or '(index)'} (schema v{report.schema_version})",
-        f"rules: {_plural(report.rules.rules, 'rule')}, "
-        f"fingerprint {report.rules.fingerprint[:12]}",
-        f"as of: {_iso(datetime.fromtimestamp(report.as_of, tz=UTC))}, "
+        f"rules: {plural(report.rules.rules, 'rule')}, fingerprint {report.rules.fingerprint[:12]}",
+        f"as of: {iso_utc(datetime.fromtimestamp(report.as_of, tz=UTC))}, "
         f"min size {stats.format_bytes(report.min_size)}, top {report.top} per kind",
         f"candidates: {report.considered} found, {listed} listed "
         f"(suppressed {report.suppressed_nested} nested, "

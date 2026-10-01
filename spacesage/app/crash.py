@@ -39,6 +39,15 @@ CRASH_EXIT_CODE = 3
 
 _LOG_DIR_NAME = "logs"
 
+_PLATFORM: str = sys.platform
+"""``sys.platform`` widened to ``str``.
+
+This module stays stdlib-only on purpose (it must import when little else
+does), so it cannot borrow :data:`spacesage._util.PLATFORM`.  The widened
+``str`` keeps mypy's ``warn_unreachable`` from folding the ``darwin`` branch
+away on Windows.
+"""
+
 
 def crash_log_dir(env: Mapping[str, str] | None = None) -> Path:
     """``<data dir>/logs`` -- computed without importing the Qt-dependent app."""
@@ -46,12 +55,12 @@ def crash_log_dir(env: Mapping[str, str] | None = None) -> Path:
     override = values.get("SPACESAGE_DATA_DIR")
     if override:
         return Path(override).expanduser() / _LOG_DIR_NAME
-    if sys.platform.startswith("win"):
+    if _PLATFORM.startswith("win"):
         base = values.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
         return Path(base) / "spacesage" / _LOG_DIR_NAME
-    if sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support" / "spacesage"
-        return base / _LOG_DIR_NAME
+    if _PLATFORM == "darwin":
+        support = Path.home() / "Library" / "Application Support" / "spacesage"
+        return support / _LOG_DIR_NAME
     xdg = values.get("XDG_DATA_HOME")
     root = Path(xdg) if xdg else Path.home() / ".local" / "share"
     return root / "spacesage" / _LOG_DIR_NAME

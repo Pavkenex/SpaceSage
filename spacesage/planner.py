@@ -126,6 +126,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from spacesage import candidates, db, rules, stats
+from spacesage._util import iso_utc, plural
 
 SCHEMA = "spacesage.plan/v1"
 """Schema string of the plan document (:func:`render_json`)."""
@@ -514,7 +515,7 @@ class Plan:
         return {
             "schema": SCHEMA,
             "plan_id": self.plan_id,
-            "created": _iso(self.created),
+            "created": iso_utc(self.created),
             "source": dict(self.source),
             "targets": {target.name: target.to_dict() for target in self.targets},
             "provenance": dict(self.provenance),
@@ -525,10 +526,6 @@ class Plan:
     def type_actions(self, action_type: str) -> tuple[PlanAction, ...]:
         """Actions of one type, in plan order."""
         return tuple(action for action in self.actions if action.type == action_type)
-
-
-def _iso(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat(timespec="seconds")
 
 
 def compute_plan_id(source: Mapping[str, str | None], actions: Sequence[PlanAction]) -> str:
@@ -952,7 +949,7 @@ class _Composer:
         return {
             "db": self._report.db_path,
             "schema_version": self._report.schema_version,
-            "as_of": _iso(datetime.fromtimestamp(self._report.as_of, tz=UTC)),
+            "as_of": iso_utc(datetime.fromtimestamp(self._report.as_of, tz=UTC)),
             "rules_fingerprint": self._report.rules.fingerprint,
             "min_size": self._report.min_size,
             "top": self._report.top,
@@ -1329,31 +1326,31 @@ def _summary_lines(plan: Plan) -> list[str]:
         "## Summary",
         "",
         f"- Delete (quarantine): "
-        f"{_plural(summary.by_type['DELETE_QUARANTINE']['actions'], 'action', 'actions')}, "
+        f"{plural(summary.by_type['DELETE_QUARANTINE']['actions'], 'action', 'actions')}, "
         f"{stats.format_bytes(summary.delete_bytes)} reclaimed",
-        f"- Move: {_plural(summary.by_type['MOVE']['actions'], 'action', 'actions')}, "
+        f"- Move: {plural(summary.by_type['MOVE']['actions'], 'action', 'actions')}, "
         f"{stats.format_bytes(summary.move_bytes)} reclaimed",
     ]
     if summary.by_type["COMPRESS_NTFS"]["actions"]:
         lines.append(
             f"- Compress (NTFS): "
-            f"{_plural(summary.by_type['COMPRESS_NTFS']['actions'], 'action', 'actions')}, "
+            f"{plural(summary.by_type['COMPRESS_NTFS']['actions'], 'action', 'actions')}, "
             f"up to {stats.format_bytes(summary.compress_bytes)} saved"
         )
     if summary.by_type["REVIEW"]["actions"]:
         lines.append(
-            f"- Review: {_plural(summary.by_type['REVIEW']['actions'], 'action', 'actions')}, "
+            f"- Review: {plural(summary.by_type['REVIEW']['actions'], 'action', 'actions')}, "
             f"{stats.format_bytes(summary.by_type['REVIEW']['bytes'])} at stake"
         )
     if summary.by_type["NATIVE"]["actions"]:
         lines.append(
             f"- Native tool: "
-            f"{_plural(summary.by_type['NATIVE']['actions'], 'action', 'actions')}, "
+            f"{plural(summary.by_type['NATIVE']['actions'], 'action', 'actions')}, "
             f"{stats.format_bytes(summary.native_bytes)} at stake"
         )
     lines.append(
         f"- **Planned: {stats.format_bytes(summary.planned_bytes)} reclaimed** by "
-        f"{_plural(summary.actions, 'action', 'actions')}"
+        f"{plural(summary.actions, 'action', 'actions')}"
     )
     if summary.covered_bytes:
         lines.append(
@@ -1362,15 +1359,10 @@ def _summary_lines(plan: Plan) -> list[str]:
         )
     if summary.dropped:
         lines.append(
-            f"- {_plural(summary.dropped, 'candidate was', 'candidates were')} dropped: "
+            f"- {plural(summary.dropped, 'candidate was', 'candidates were')} dropped: "
             "everything they covered is already planned by another action."
         )
     return lines
-
-
-def _plural(count: int, singular: str, plural: str) -> str:
-    """``1 candidate was`` / ``3 candidates were``."""
-    return f"{count} {singular if count == 1 else plural}"
 
 
 def render_markdown(plan: Plan) -> str:
@@ -1388,7 +1380,7 @@ def render_markdown(plan: Plan) -> str:
         f"{summary.actions} actions",
         "",
         f"- **Plan id:** `{plan.plan_id}`",
-        f"- **Created:** {_iso(plan.created)}",
+        f"- **Created:** {iso_utc(plan.created)}",
         f"- **Source:** {where}",
     ]
     for target in plan.targets:
@@ -1408,7 +1400,7 @@ def render_markdown(plan: Plan) -> str:
         lines.append("")
         lines.append(
             f"## {HEADINGS[action_type]} -- "
-            f"{_plural(len(block), 'action', 'actions')}, {stats.format_bytes(total)}"
+            f"{plural(len(block), 'action', 'actions')}, {stats.format_bytes(total)}"
         )
         lines.append("")
         for action in block:

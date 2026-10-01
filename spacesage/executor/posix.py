@@ -15,6 +15,7 @@ import contextlib
 import errno
 import os
 import shutil
+from typing import Any
 
 from . import backend
 from .backend import PrimResult
@@ -199,9 +200,13 @@ def _names_of(path: str) -> int:
 def _flock_probe(handle: int) -> tuple[bool, str]:
     """``(locked, reason)``: can this process take an exclusive advisory lock?"""
     try:
-        import fcntl
+        import fcntl as _fcntl
     except ImportError:  # pragma: no cover - Windows never reaches this backend
         return False, ""
+    # typeshed strips ``flock`` and the ``LOCK_*`` constants from fcntl on
+    # Windows; the guarded import above is the real availability check, so the
+    # module is treated as Any here rather than fought with per-line ignores.
+    fcntl: Any = _fcntl
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:

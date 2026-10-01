@@ -20,7 +20,6 @@ What the promotion refuses, and why:
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import tomllib
@@ -32,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from spacesage import rules
+from spacesage._util import toml_number, toml_string
 from spacesage.ai.errors import INVALID_CONFIG, AIError
 from spacesage.ai.prompts import Classification, ItemFacts, Suggestion
 
@@ -134,24 +134,24 @@ class RuleDraft:
     def render(self) -> str:
         """The ``[[rule]]`` block written to the pack."""
         self.validate()
-        lines = ["[[rule]]", f"id = {_toml_string(self.id)}"]
+        lines = ["[[rule]]", f"id = {toml_string(self.id)}"]
         if self.paths:
-            lines.append(f"path = [{', '.join(_toml_string(path) for path in self.paths)}]")
+            lines.append(f"path = [{', '.join(toml_string(path) for path in self.paths)}]")
         if self.exts:
-            lines.append(f"ext = [{', '.join(_toml_string(ext) for ext in self.exts)}]")
+            lines.append(f"ext = [{', '.join(toml_string(ext) for ext in self.exts)}]")
         if self.min_size is not None:
             lines.append(f"min_size = {int(self.min_size)}")
         if self.older_than_days is not None:
-            lines.append(f"older_than_days = {_toml_number(self.older_than_days)}")
+            lines.append(f"older_than_days = {toml_number(self.older_than_days)}")
         if self.name_regex is not None:
-            lines.append(f"name_regex = {_toml_string(self.name_regex)}")
-        lines.append(f"category = {_toml_string(self.category)}")
-        lines.append(f"tier = {_toml_string(self.tier)}")
-        lines.append(f"action = {_toml_string(self.action)}")
-        lines.append(f"confidence = {_toml_number(self.confidence)}")
-        lines.append(f"rationale = {_toml_string(self.rationale)}")
+            lines.append(f"name_regex = {toml_string(self.name_regex)}")
+        lines.append(f"category = {toml_string(self.category)}")
+        lines.append(f"tier = {toml_string(self.tier)}")
+        lines.append(f"action = {toml_string(self.action)}")
+        lines.append(f"confidence = {toml_number(self.confidence)}")
+        lines.append(f"rationale = {toml_string(self.rationale)}")
         if self.native:
-            lines.append(f"native = {_toml_string(self.native)}")
+            lines.append(f"native = {toml_string(self.native)}")
         return "\n".join(lines)
 
 
@@ -392,8 +392,8 @@ def render_pack(
         "# but the app rewrites this file when a new verdict is promoted.",
         "",
         "[pack]",
-        f"id = {_toml_string(pack_id)}",
-        f"title = {_toml_string(title)}",
+        f"id = {toml_string(pack_id)}",
+        f"title = {toml_string(title)}",
         f"order = {order}",
     ]
     for draft in drafts:
@@ -516,17 +516,6 @@ def _check_written_pack(tmp: Path) -> None:
             f"the promoted pack does not load: {exc}",
             hint="this is a bug - report it with the rule that produced it",
         ) from exc
-
-
-def _toml_string(value: str) -> str:
-    """A TOML basic string (JSON escaping is a valid subset for our values)."""
-    return json.dumps(value, ensure_ascii=False)
-
-
-def _toml_number(value: float) -> str:
-    if float(value).is_integer():
-        return str(int(value))
-    return repr(float(value))
 
 
 __all__ = [

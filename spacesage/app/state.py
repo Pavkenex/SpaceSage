@@ -10,13 +10,13 @@ tests and portable installs.
 from __future__ import annotations
 
 import os
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 
 from PySide6.QtCore import QSettings
 
 from spacesage import db, planning
+from spacesage._util import PLATFORM
 
 APP_DIR_NAME = "spacesage"
 """Folder name under the platform's data directory."""
@@ -39,10 +39,10 @@ def data_dir(env: Mapping[str, str] | None = None) -> Path:
     override = values.get("SPACESAGE_DATA_DIR")
     if override:
         return Path(override).expanduser()
-    if sys.platform.startswith("win"):
+    if PLATFORM.startswith("win"):
         base = values.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
         return Path(base) / APP_DIR_NAME
-    if sys.platform == "darwin":
+    if PLATFORM == "darwin":
         return Path.home() / "Library" / "Application Support" / APP_DIR_NAME
     xdg = values.get("XDG_DATA_HOME")
     root = Path(xdg) if xdg else Path.home() / ".local" / "share"

@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from spacesage import candidates, rules, stats
+from spacesage._util import ext_of
 from spacesage.ai.client import Message
 from spacesage.ai.errors import SCHEMA, AIError
 
@@ -162,7 +163,7 @@ def facts_from_opportunity(row: Opportunity) -> ItemFacts:
         path=row.path,
         is_dir=row.is_dir,
         size=row.size,
-        ext=None if row.is_dir else _ext_of(row.path),
+        ext=None if row.is_dir else ext_of(row.path),
         age_days=row.age_days,
         tier=row.tier,
         category=row.category,
@@ -177,13 +178,6 @@ def facts_from_opportunity(row: Opportunity) -> ItemFacts:
         volume=row.volume,
         native=row.native,
     )
-
-
-def _ext_of(path: str) -> str | None:
-    name = path.replace("\\", "/").rsplit("/", 1)[-1]
-    if "." not in name[1:]:
-        return None
-    return name.rsplit(".", 1)[-1].lower()
 
 
 # --------------------------------------------------------------------------- #

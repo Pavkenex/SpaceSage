@@ -53,6 +53,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
+from spacesage._util import iso_utc, plural
 from spacesage.stats import format_bytes
 
 SCHEMA = "spacesage.deepscan/v1"
@@ -409,7 +410,7 @@ class ScanReport:
             "schema": SCHEMA,
             "roots": list(self.roots),
             "notes": list(self.notes),
-            "as_of": _iso(self.as_of),
+            "as_of": iso_utc(self.as_of),
             "elapsed_s": round(self.elapsed_s, 3),
             "thresholds": {
                 "min_size": self.min_size,
@@ -482,7 +483,7 @@ def _root_link_reason(path: str) -> str | None:
     return None
 
 
-def _path_components(path: str) -> int:
+def _component_count(path: str) -> int:
     """Number of components in a path (either separator style)."""
     return sum(1 for part in path.replace("\\", "/").split("/") if part)
 
@@ -834,7 +835,7 @@ def _keep_key(file: _ScanFile) -> tuple[int, int, int, int, str]:
     return (
         0 if file.mtime is not None else 1,
         -(file.mtime or 0),
-        _path_components(file.path),
+        _component_count(file.path),
         len(file.path),
         file.path,
     )
@@ -1121,27 +1122,19 @@ def scan(
 # --------------------------------------------------------------------------- #
 
 
-def _iso(value: int) -> str:
-    return datetime.fromtimestamp(value, tz=UTC).isoformat(timespec="seconds")
-
-
 def _iso_optional(value: int | None) -> str | None:
-    return None if value is None else _iso(value)
-
-
-def _plural(count: int, singular: str, plural: str | None = None) -> str:
-    return f"{count} {singular if count == 1 else (plural or singular + 's')}"
+    return None if value is None else iso_utc(value)
 
 
 def _group_header(group: DuplicateGroup) -> str:
     text = (
         f"{group.group_id}  {format_bytes(group.size)} each, "
-        f"{_plural(group.copies, 'copy', 'copies')}, reclaimable "
+        f"{plural(group.copies, 'copy', 'copies')}, reclaimable "
         f"{format_bytes(group.reclaimable_bytes)}  [sha256 {group.sha256[:12]}]"
     )
     if group.paths > group.copies:
         text += (
-            f"  ({_plural(group.paths, 'path')}; "
+            f"  ({plural(group.paths, 'path')}; "
             f"{format_bytes(group.linked_bytes)} already saved by hardlinks)"
         )
     return text
@@ -1152,7 +1145,7 @@ def _member_line(member: GroupMember) -> str:
     if member.same_as:
         line += f"  (same file as {member.same_as})"
     elif member.links > 1:
-        line += f"  ({_plural(member.links, 'hardlink')})"
+        line += f"  ({plural(member.links, 'hardlink')})"
     return line
 
 
@@ -1163,21 +1156,21 @@ def render_text(report: ScanReport, *, top: int = DEFAULT_TOP) -> str:
     summary = report.summary
     lines = [
         f"roots: {', '.join(report.roots)}",
-        f"as of: {_iso(report.as_of)}, {report.elapsed_s:.2f} s",
+        f"as of: {iso_utc(report.as_of)}, {report.elapsed_s:.2f} s",
         f"min size: {format_bytes(report.min_size)}, partial read "
         f"{format_bytes(report.partial_bytes)}",
-        f"scanned: {_plural(report.stats.files, 'file')}, "
+        f"scanned: {plural(report.stats.files, 'file')}, "
         f"{format_bytes(report.stats.bytes)} (skipped {report.stats.skipped_small} small, "
         f"{report.stats.skipped_links} links, {report.stats.skipped_special} special)",
-        f"candidates: {_plural(report.stats.candidates, 'file')}, "
+        f"candidates: {plural(report.stats.candidates, 'file')}, "
         f"{format_bytes(report.stats.candidate_bytes)}",
-        f"hashed: {_plural(report.stats.partial_reads, 'partial read')} + "
-        f"{_plural(report.stats.full_reads, 'full read')}, "
+        f"hashed: {plural(report.stats.partial_reads, 'partial read')} + "
+        f"{plural(report.stats.full_reads, 'full read')}, "
         f"{format_bytes(report.stats.bytes_read)} read",
     ]
     if report.stats.reused_reads:
         lines.append(
-            f"reused: {_plural(report.stats.reused_reads, 'path')} hashed by file "
+            f"reused: {plural(report.stats.reused_reads, 'path')} hashed by file "
             f"identity (hard links are not read twice)"
         )
     if report.stats.unreadable or report.stats.changed:
@@ -1186,14 +1179,14 @@ def render_text(report: ScanReport, *, top: int = DEFAULT_TOP) -> str:
             f"{report.stats.changed} changed while scanning"
         )
     lines.append(
-        f"groups: {_plural(summary.groups, 'duplicate group')} "
-        f"({_plural(summary.paths, 'path')}, {_plural(summary.copies, 'copy', 'copies')}) "
+        f"groups: {plural(summary.groups, 'duplicate group')} "
+        f"({plural(summary.paths, 'path')}, {plural(summary.copies, 'copy', 'copies')}) "
         f"-- reclaimable {format_bytes(summary.reclaimable_bytes)}"
     )
     if summary.hardlink_sets:
         lines.append(
-            f"hardlinks: {_plural(summary.hardlink_sets, 'set')} "
-            f"({_plural(summary.hardlink_paths, 'path')}) -- "
+            f"hardlinks: {plural(summary.hardlink_sets, 'set')} "
+            f"({plural(summary.hardlink_paths, 'path')}) -- "
             f"{format_bytes(summary.linked_bytes)} already saved"
         )
     for note in report.notes:
@@ -1209,7 +1202,7 @@ def render_text(report: ScanReport, *, top: int = DEFAULT_TOP) -> str:
         if group.hardlink.feasible:
             count = len(group.hardlink.relink)
             noun = "a hardlink" if count == 1 else "hardlinks"
-            paths = _plural(count, "path")
+            paths = plural(count, "path")
             lines.append(
                 f"  dedupe: re-create {paths} as {noun} to "
                 f"{group.hardlink.link_to} (same volume) -- frees "
@@ -1222,7 +1215,7 @@ def render_text(report: ScanReport, *, top: int = DEFAULT_TOP) -> str:
     for item in report.hardlink_sets:
         lines.append(
             f"\n{item.set_id}  {format_bytes(item.size)} each, "
-            f"{_plural(item.paths, 'path')}, one physical copy -- "
+            f"{plural(item.paths, 'path')}, one physical copy -- "
             f"{format_bytes(item.linked_bytes)} already saved, nothing to reclaim"
         )
         lines.append(f"  keep: {item.keep}  ({item.keep_reason})")

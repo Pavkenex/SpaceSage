@@ -21,6 +21,32 @@ not understand.
   the catalog. No special headers are sent (the OpenCode routing headers stay
   scoped to `opencode.ai`).
 
+### Changed
+- **Shared helpers have one home each.** Four copies of `_iso`, five of
+  `_plural`, two each of the TOML escapers and `_ext_of`, two each of the CLI
+  `--kind` / `--min-size` parsers, and two each of the executor's required /
+  optional record-field readers were private copies in the modules that needed
+  them, so a fix had to be repeated or it drifted. They now live in
+  `spacesage._util` (`iso_utc`, `plural`, `toml_string`, `toml_number`,
+  `ext_of`), `spacesage._cliargs` (`kind_list`, `size_arg`) and
+  `spacesage.executor._fields` (`required_str`, `optional_str`), shared by the
+  engine, the AI layer and the executor. No behaviour changed.
+- **The CLI parser builder is split by subcommand.** `spacesage.cli`'s
+  `build_parser` was a single 458-line function; it is now a short composition
+  over one `_add_<command>_parser` helper per subcommand (`deepscan` through
+  `undo`), so a command's arguments are read in one place.
+- **Three private functions called `_path_components` are renamed to say what
+  they do** (`_component_count` in `deepscan`, `_glob_literals` in `rules`,
+  `_split_path` in `stats`), so grepping the name no longer returns three
+  different jobs.
+- **`mypy --strict` now passes on Windows.** The per-OS directory helpers read
+  `sys.platform` through a widened `str` (`spacesage._util.PLATFORM`, or a
+  local `_PLATFORM` in the stdlib-only crash reporter), so `warn_unreachable`
+  no longer folds the `darwin` branch away on Windows; the guarded `fcntl`
+  import is treated as `Any` because typeshed strips its `LOCK_*` constants
+  off Windows. This also surfaced and fixed a latent variable-type bug in
+  `crash.crash_log_dir`. The gate runs on Linux in CI either way.
+
 ### Fixed
 - **The candidates CLI test no longer drifts with the calendar.** The suite was
   red on 2026-10-01, not because anything broke but because
