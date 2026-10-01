@@ -15,7 +15,7 @@ speaking the OpenAI-compatible API - plus the policy switches (streaming,
 
     [[ai.providers]]
     name = "ollama"
-    preset = "ollama"          # ollama | lmstudio | openai | openrouter | opencode | custom
+    preset = "ollama"          # ollama | lmstudio | openai | openrouter | opencode | charm | custom
     model = "llama3.2"
 
 **API keys are never stored here.**  A provider names the environment variable
@@ -143,6 +143,21 @@ PRESETS: Mapping[str, ProviderPreset] = {
             "Cloud gateway: the items you suggest for leave this machine. Every call carries "
             "the routing header OpenCode requires (x-opencode-session) plus "
             "x-opencode-client: spacesage."
+        ),
+    ),
+    "charm": ProviderPreset(
+        kind="charm",
+        title="Charm Hyper",
+        base_url="https://hyper.charm.land/v1",
+        api_key_env="HYPER_API_KEY",
+        model="deepseek-v4.1-flash",
+        local=False,
+        pricing_in=0.30,
+        pricing_out=1.20,
+        note=(
+            "Cloud gateway (charm.land): the items you suggest for leave this machine. "
+            "One subscription covers the whole catalog; the prices here are the preset "
+            "model's (deepseek-v4.1-flash) - update them if you switch models."
         ),
     ),
     "custom": ProviderPreset(
@@ -1044,4 +1059,4 @@ def _toml_bool(value: bool) -> str:
 
 def preset_choices() -> tuple[str, ...]:
     """Preset kinds the UI offers as quick-add buttons, in a friendly order."""
-    return ("ollama", "lmstudio", "openai", "openrouter", "opencode", "custom")
+    return ("ollama", "lmstudio", "openai", "openrouter", "opencode", "charm", "custom")

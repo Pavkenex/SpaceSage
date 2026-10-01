@@ -212,7 +212,8 @@ written by the rule engine.**
 ![Settings: provider management, the policies and a test-connection result](../artifacts/gui/providers.png)
 
 Settings owns the provider list (add / edit / remove, presets for Ollama, LM
-Studio, OpenAI, OpenRouter and any custom OpenAI-compatible endpoint), *Test
+Studio, OpenAI, OpenRouter, OpenCode Zen, Charm Hyper and any custom
+OpenAI-compatible endpoint), *Test
 connection* (the models the endpoint offers, the models it actually calls, the
 latency), the default provider (named in the list), and the three switches that
 decide what leaves the machine: `redact_paths`, local-only and streaming. The

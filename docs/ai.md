@@ -24,7 +24,7 @@ No chat surface: output renders next to the items it concerns (design.md §9).
 ## Provider setup
 
 The client speaks one protocol — the OpenAI-compatible API over stdlib `urllib`,
-no SDK — so anything that speaks it works. Six presets fill in the defaults:
+no SDK — so anything that speaks it works. Seven presets fill in the defaults:
 
 | preset | base URL | default model | key | local |
 |---|---|---|---|---|
@@ -33,11 +33,23 @@ no SDK — so anything that speaks it works. Six presets fill in the defaults:
 | `openai` | `https://api.openai.com/v1` | `gpt-4o-mini` | `OPENAI_API_KEY` | no |
 | `openrouter` | `https://openrouter.ai/api/v1` | `openai/gpt-4o-mini` | `OPENROUTER_API_KEY` | no |
 | `opencode` | `https://opencode.ai/zen/v1` | `deepseek-v4-flash` | `OPENCODE_API_KEY` | no |
+| `charm` | `https://hyper.charm.land/v1` | `deepseek-v4.1-flash` | `HYPER_API_KEY` | no |
 | `custom` | (you set it) | (you set it) | `SPACESAGE_AI_API_KEY` | no |
 
-Local presets need no key; `openai` carries prices; the two gateways
+Local presets need no key; `openai` and `charm` carry prices; the gateways
 (`openrouter`, `opencode`) price per model; `custom` covers vLLM, llama.cpp and
 anything else.
+
+### Charm Hyper
+
+`charm` points at Charm Hyper (`charm.land`), an OpenAI-compatible gateway with
+one subscription over a whole model catalog — DeepSeek, GLM, Qwen, Kimi, MiniMax
+and more. The key is read from `HYPER_API_KEY` (`sk-hyper-…`). Pick a
+`/chat/completions` model; `deepseek-v4.1-flash` is the preset default. The
+preset carries that model's published prices ($0.30 / $1.20 per 1M tokens in and
+out) so the cost meter works out of the box — update `pricing_in` / `pricing_out`
+when you switch to a differently priced model. No extra headers are needed (the
+`x-opencode-session` header is only ever sent to `opencode.ai`).
 
 ### OpenCode Zen
 
@@ -289,7 +301,7 @@ a suggestion, an annotation or a rule proposal that a human accepts.
   own action ids and shows a summary card; an annotation can be taken out of the plan,
   but a plan's action list is only ever written by the rule engine.
 - **Settings** owns the provider list (add / edit / remove, presets for ollama, lmstudio,
-  openai, openrouter, opencode and a custom endpoint), *Test connection* (the models the
+  openai, openrouter, opencode, charm and a custom endpoint), *Test connection* (the models the
   endpoint offers and the latency), the default provider (named in the list), and the three
   switches that decide what leaves the machine: `redact_paths`, local-only and streaming.
   The key field takes the *name* of an environment variable, never the key itself: a

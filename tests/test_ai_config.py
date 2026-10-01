@@ -83,6 +83,29 @@ def test_the_opencode_preset_targets_the_zen_gateway() -> None:
     assert provider.key_present(env={"OPENCODE_API_KEY": "stub-key"}) is True
 
 
+def test_the_charm_preset_targets_the_hyper_gateway() -> None:
+    """Charm Hyper: the OpenAI-compatible gateway a charm.land subscription unlocks."""
+    preset = ai_config.PRESETS["charm"]
+    provider = ProviderConfig.from_preset("charm", kind="charm")
+
+    assert "charm" in ai_config.preset_choices()
+    assert preset.title == "Charm Hyper"
+    assert preset.base_url == "https://hyper.charm.land/v1"
+    assert preset.api_key_env == "HYPER_API_KEY"
+    assert preset.model == "deepseek-v4.1-flash"  # a /chat/completions model on this gateway
+    assert preset.local is False
+    assert preset.pricing_in == 0.30 and preset.pricing_out == 1.20
+    assert "charm.land" in preset.note
+
+    assert provider.kind == "charm"
+    assert provider.host() == "hyper.charm.land"
+    assert provider.is_local is False
+    assert provider.chat_url() == "https://hyper.charm.land/v1/chat/completions"
+    assert provider.models_url() == "https://hyper.charm.land/v1/models"
+    assert provider.key_present(env={}) is False
+    assert provider.key_present(env={"HYPER_API_KEY": "stub-key"}) is True
+
+
 def test_a_cloud_provider_without_a_key_is_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = ProviderConfig.from_preset("openai", kind="openai", api_key_env="OPENAI_API_KEY")
     config = AIConfig(providers=(provider,), default_provider="openai", enabled=True)

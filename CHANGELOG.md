@@ -10,6 +10,17 @@ not understand.
 
 ## [Unreleased]
 
+### Added
+- **Charm Hyper is a preset.** `charm` fills in the OpenAI-compatible gateway
+  at `https://hyper.charm.land/v1`, the key variable `HYPER_API_KEY`
+  (`sk-hyper-…`) and the default model `deepseek-v4.1-flash`, so a charm.land
+  subscription is a one-click add in Settings instead of a hand-written
+  `custom` provider. The preset carries that model's published prices
+  ($0.30 / $1.20 per 1M tokens) so the cost meter works out of the box; the
+  tooltip says to update them when switching to a differently priced model in
+  the catalog. No special headers are sent (the OpenCode routing headers stay
+  scoped to `opencode.ai`).
+
 ### Fixed
 - **The candidates CLI test no longer drifts with the calendar.** The suite was
   red on 2026-10-01, not because anything broke but because

@@ -28,10 +28,10 @@ Settings (AI) when you want help with the ambiguous long tail: the rows no rule
 recognised.
 
 **Which providers work?**
-Any OpenAI-compatible HTTP endpoint: OpenAI, OpenRouter, OpenCode Zen, Ollama,
-LM Studio, vLLM, llama.cpp's server, or a custom base URL. Presets exist for the
-common ones; there is no SDK and no vendor lock-in — it is plain HTTP against
-`/chat/completions`.
+Any OpenAI-compatible HTTP endpoint: OpenAI, OpenRouter, OpenCode Zen, Charm
+Hyper, Ollama, LM Studio, vLLM, llama.cpp's server, or a custom base URL. Presets
+exist for the common ones; there is no SDK and no vendor lock-in — it is plain
+HTTP against `/chat/completions`.
 
 **Does the AI see my file names, or my files?**
 It sees *facts about items*: the path (or a token), folder flag, size,
