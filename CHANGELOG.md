@@ -10,6 +10,8 @@ not understand.
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-10-02
+
 ### Added
 - **The completion ceiling now comes from the model, when the provider publishes
   it.** `GET /models` is specified as an id list, so OpenAI's own shape (and

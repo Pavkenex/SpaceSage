@@ -44,9 +44,9 @@ def load_ci_workflow() -> dict[str, object]:
 def test_version_constant() -> None:
     # Pinned to the released version: the release workflow refuses a tag that
     # does not match what the package reports, so this is the CI-side half of
-    # that check (v0.1.11 is the tag of the release that retries a truncated
-    # reasoning pass).  Bump this line with __version__.
-    assert spacesage.__version__ == "0.1.11"
+    # that check (v0.1.12 is the tag of the release that reads each model's own
+    # limits and prices from /models).  Bump this line with __version__.
+    assert spacesage.__version__ == "0.1.12"
 
 
 def test_installed_metadata_matches_version_constant() -> None:
