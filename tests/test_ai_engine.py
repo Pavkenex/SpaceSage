@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from ai_stub import (
     StubReply,
     StubServer,
@@ -24,9 +26,9 @@ from ai_stub import (
 )
 from ai_support import fact
 from spacesage.ai import AIConfig, AIEngine, AIError, ProviderConfig
-from spacesage.ai.engine import TRUNCATION_RETRY_TOKENS
+from spacesage.ai.client import ModelInfo
+from spacesage.ai.engine import DEFAULT_CEILING, MAX_CEILING
 from spacesage.ai.guardrails import assert_redacted
-from spacesage.ai.prompts import use_case
 
 INSTALLERS = "C:\\Users\\matija\\Downloads"
 SETUP = INSTALLERS + "\\setup-old.msi"
@@ -120,10 +122,10 @@ def truncated_reply() -> StubReply:
     )
 
 
-def test_a_reasoning_model_that_truncated_is_retried_with_more_room(
+def test_a_reasoning_model_that_truncated_is_retried_at_the_cap(
     ai_stub: StubServer, ai_engine: AIEngine
 ) -> None:
-    """A model that spent its whole ceiling thinking is asked again with a bigger one."""
+    """A model that spent its whole ceiling thinking is asked again at the cap."""
     ai_stub.push(truncated_reply())
     ai_stub.queue_json(suggestion_answer(item(SETUP)))
 
@@ -135,8 +137,58 @@ def test_a_reasoning_model_that_truncated_is_retried_with_more_room(
     assert ai_stub.calls == 2
     first, second = ai_stub.chat_requests
     assert first.body is not None and second.body is not None
-    assert first.body["max_tokens"] == use_case("suggest").max_tokens
-    assert second.body["max_tokens"] == TRUNCATION_RETRY_TOKENS
+    assert first.body["max_tokens"] == DEFAULT_CEILING, "the stub publishes no model limit"
+    assert second.body["max_tokens"] == MAX_CEILING
+
+
+def test_the_ceiling_is_the_models_own_maximum_when_the_provider_publishes_it(
+    ai_stub: StubServer, ai_engine: AIEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A published ``max_output_tokens`` is the ceiling -- smaller than the default here."""
+    monkeypatch.setattr(
+        ai_engine,
+        "models",
+        lambda **_kwargs: (ModelInfo(id="stub-model", max_output_tokens=2048),),
+    )
+    ai_stub.queue_json(suggestion_answer(item(SETUP)))
+
+    assert ai_engine.suggest([fact(SETUP)]).ok is True
+
+    assert ai_stub.chat_requests[0].body["max_tokens"] == 2048
+
+
+def test_a_published_maximum_is_capped(
+    ai_stub: StubServer, ai_engine: AIEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Charm Hyper publishes 262 144 for deepseek-v4.1-flash; SpaceSage asks for the cap."""
+    monkeypatch.setattr(
+        ai_engine,
+        "models",
+        lambda **_kwargs: (ModelInfo(id="stub-model", max_output_tokens=262_144),),
+    )
+    ai_stub.queue_json(suggestion_answer(item(SETUP)))
+
+    assert ai_engine.suggest([fact(SETUP)]).ok is True
+
+    assert ai_stub.chat_requests[0].body["max_tokens"] == MAX_CEILING
+
+
+def test_published_prices_meter_a_provider_that_configures_none(
+    ai_stub: StubServer, ai_engine: AIEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A gateway that publishes prices gets them used; an explicit config price would win."""
+    monkeypatch.setattr(
+        ai_engine,
+        "models",
+        lambda **_kwargs: (ModelInfo(id="stub-model", pricing_in=0.33, pricing_out=1.31),),
+    )
+    ai_stub.queue_json(suggestion_answer(item(SETUP)))
+
+    outcome = ai_engine.suggest([fact(SETUP)])
+
+    assert outcome.ok is True
+    # the stub's own usage envelope: 11 prompt and 7 completion tokens
+    assert outcome.cost_usd == pytest.approx((11 * 0.33 + 7 * 1.31) / 1_000_000)
 
 
 def test_no_action_is_a_first_class_answer(ai_stub: StubServer, ai_engine: AIEngine) -> None:

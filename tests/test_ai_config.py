@@ -94,7 +94,7 @@ def test_the_charm_preset_targets_the_hyper_gateway() -> None:
     assert preset.api_key_env == "HYPER_API_KEY"
     assert preset.model == "deepseek-v4.1-flash"  # a /chat/completions model on this gateway
     assert preset.local is False
-    assert preset.pricing_in == 0.30 and preset.pricing_out == 1.20
+    assert preset.pricing_in == 0.33 and preset.pricing_out == 1.31
     assert "charm.land" in preset.note
 
     assert provider.kind == "charm"

@@ -62,15 +62,23 @@ DEFAULT_BATCH_SIZE = 8
 DEFAULT_MAX_ITEMS = 200
 """Items a single batch run covers (the rest are reported as not filled)."""
 
-TRUNCATION_RETRY_TOKENS = 16_384
-"""The ceiling a call retries at when the model spent its whole budget reasoning.
+DEFAULT_CEILING = 16_384
+"""The completion ceiling when the provider does not publish the model's own.
+
+The OpenAI ``/models`` shape carries no limit, so a provider that sends the
+bare shape (OpenCode Zen does) gets this.  It is generous on purpose: a ceiling
+is not an allocation, so room the model does not use costs nothing.
+"""
+
+MAX_CEILING = 32_768
+"""The most SpaceSage will ask any model for, however large its maximum is.
 
 A reasoning model (``deepseek-v4.1-flash`` and its kin) writes its thinking
-before its answer, so a per-use-case ceiling can bind before a single token of
-the answer exists and the call comes back empty (``truncated``).  Rather than
-fail, the call is retried once at this ceiling: a ceiling is not an allocation,
-so room the model does not use costs nothing, and only a call that truncated
-pays for the retry.
+before its answer, so a ceiling can bind before a single token of the answer
+exists and the call comes back empty (``truncated``).  A call that truncates is
+retried once at this cap, and the cap also bounds the worst case: a model that
+rambles is stopped here rather than at its (possibly enormous) published
+maximum.
 """
 
 
@@ -139,6 +147,8 @@ class AIEngine:
         # client's own default is the last resort).
         self._retries = base.retries if retries is None else max(0, retries)
         self._client: AIClient | None = None
+        self._model_entry: ModelInfo | None = None
+        self._model_info_read = False
         self.cache = (
             cache
             if cache is not None
@@ -418,9 +428,8 @@ class AIEngine:
         started = time.monotonic()
         result, retries = self._complete(client, messages, case, stream=stream, on_delta=on_delta)
         latency = time.monotonic() - started
-        self.meter.record(
-            result.usage, pricing_in=provider.pricing_in, pricing_out=provider.pricing_out
-        )
+        pricing_in, pricing_out = self._pricing()
+        self.meter.record(result.usage, pricing_in=pricing_in, pricing_out=pricing_out)
         calls = 1 + retries
         answer, errors = guardrails.read_answer(prepared.case_id, result.text)
         if errors:
@@ -428,9 +437,7 @@ class AIEngine:
                 client=client, case_id=prepared.case_id, result=result, errors=errors
             )
             calls += 1
-            self.meter.record(
-                repaired.usage, pricing_in=provider.pricing_in, pricing_out=provider.pricing_out
-            )
+            self.meter.record(repaired.usage, pricing_in=pricing_in, pricing_out=pricing_out)
             answer, errors = guardrails.read_answer(prepared.case_id, repaired.text)
             if errors:
                 raise guardrails.repair_failure(prepared.case_id, repaired.text, errors)
@@ -450,7 +457,7 @@ class AIEngine:
                     tokens=prepared.redactor.mapping() if prepared.redactor is not None else {},
                 )
             )
-        cost = _cost_of(result.usage, provider)
+        cost = _cost_of(result.usage, (pricing_in, pricing_out))
         return _Answer(
             answer=answer,
             cache_hit=False,
@@ -470,17 +477,23 @@ class AIEngine:
         stream: bool,
         on_delta: Callable[[str], None] | None,
     ) -> tuple[ChatResult, int]:
-        """One completion, retried once with more room when the model truncated.
+        """One completion, retried once at the cap when the model truncated.
 
         A reasoning model can spend the whole completion budget thinking and
-        return nothing; the retry hands it a ceiling it can finish inside, and
-        the tokens the failed attempt still burned are metered either way.  The
-        integer is how many extra provider calls the retry took.
+        return nothing; the retry hands it the largest ceiling SpaceSage uses,
+        and the tokens the failed attempt still burned are metered either way.
+        The integer is how many extra provider calls the retry took.
         """
+        ceiling = self._ceiling()
         try:
-            return self._call(client, messages, case, stream=stream, on_delta=on_delta), 0
+            return (
+                self._call(
+                    client, messages, case, ceiling=ceiling, stream=stream, on_delta=on_delta
+                ),
+                0,
+            )
         except AIError as exc:
-            if exc.code != TRUNCATED or case.max_tokens >= TRUNCATION_RETRY_TOKENS:
+            if exc.code != TRUNCATED or ceiling >= MAX_CEILING:
                 raise
             self._meter_truncated(exc)
             return (
@@ -488,9 +501,9 @@ class AIEngine:
                     client,
                     messages,
                     case,
+                    ceiling=MAX_CEILING,
                     stream=stream,
                     on_delta=on_delta,
-                    max_tokens=TRUNCATION_RETRY_TOKENS,
                 ),
                 1,
             )
@@ -501,12 +514,11 @@ class AIEngine:
         messages: Sequence[Message],
         case: prompts.UseCase,
         *,
+        ceiling: int,
         stream: bool,
         on_delta: Callable[[str], None] | None,
-        max_tokens: int | None = None,
     ) -> ChatResult:
-        """Send one completion at ``max_tokens`` (the use case's ceiling by default)."""
-        ceiling = case.max_tokens if max_tokens is None else max_tokens
+        """Send one completion at ``ceiling`` tokens."""
         if stream and on_delta is not None:
             return client.chat_stream(
                 messages,
@@ -516,16 +528,67 @@ class AIEngine:
             )
         return client.chat(messages, temperature=case.temperature, max_tokens=ceiling)
 
+    def _model_info(self) -> ModelInfo | None:
+        """The provider's own ``/models`` entry for the configured model.
+
+        Best effort and fetched once per engine: limits and prices are provider
+        extensions, and a provider that publishes neither (or will not list its
+        models at all) simply leaves the defaults in place.  Nothing here can
+        fail a call.
+        """
+        if not self._model_info_read:
+            self._model_info_read = True
+            self._model_entry = None
+            try:
+                wanted = self.provider().model
+                self._model_entry = next(
+                    (info for info in self.models() if info.id == wanted), None
+                )
+            except AIError:
+                self._model_entry = None
+        return self._model_entry
+
+    def _ceiling(self) -> int:
+        """The completion ceiling for a call.
+
+        The model's own maximum is the right ceiling when the provider publishes
+        it: it is what stops a provider rejecting ``max_tokens`` as too large,
+        and what lets a reasoning pass finish.  Without one the default applies.
+        Either way it is capped, and a truncated call retries at the cap.
+        """
+        info = self._model_info()
+        limit = info.max_output_tokens if info is not None else None
+        if limit is None:
+            return DEFAULT_CEILING
+        return max(64, min(limit, MAX_CEILING))
+
+    def _pricing(self) -> tuple[float | None, float | None]:
+        """The prices to meter with: the config's, else the provider's own.
+
+        An explicit price in ``ai.toml`` always wins -- it is the user's number.
+        Discovery only fills the gap, which is what lets a gateway that
+        publishes prices (Charm Hyper does) meter correctly without them.
+        """
+        provider = self.provider()
+        if provider.pricing_in is not None and provider.pricing_out is not None:
+            return provider.pricing_in, provider.pricing_out
+        info = self._model_info()
+        if info is None:
+            return provider.pricing_in, provider.pricing_out
+        pricing_in = provider.pricing_in if provider.pricing_in is not None else info.pricing_in
+        pricing_out = provider.pricing_out if provider.pricing_out is not None else info.pricing_out
+        return pricing_in, pricing_out
+
     def _meter_truncated(self, exc: AIError) -> None:
         """Record the tokens a truncated attempt spent (when its body carried them)."""
         usage = exc.detail.get("usage")
         if not isinstance(usage, Mapping):
             return
-        provider = self.provider()
+        pricing_in, pricing_out = self._pricing()
         self.meter.record(
             _usage_from_mapping(usage),
-            pricing_in=provider.pricing_in,
-            pricing_out=provider.pricing_out,
+            pricing_in=pricing_in,
+            pricing_out=pricing_out,
         )
 
     def _repair(
@@ -542,7 +605,7 @@ class AIEngine:
         return client.chat(
             (Message(role="system", content=case.system), repair),
             temperature=0.0,
-            max_tokens=case.max_tokens,
+            max_tokens=self._ceiling(),
         )
 
     # ------------------------------------------------------------------ #
@@ -923,11 +986,13 @@ class _DeltaSink:
             self._callback(text)
 
 
-def _cost_of(usage: Usage, provider: ProviderConfig) -> float | None:
-    if provider.pricing_in is None or provider.pricing_out is None:
+def _cost_of(usage: Usage, pricing: tuple[float | None, float | None]) -> float | None:
+    """The call's cost in USD, or ``None`` when either price is unknown."""
+    pricing_in, pricing_out = pricing
+    if pricing_in is None or pricing_out is None:
         return None
     return (
-        usage.prompt_tokens * provider.pricing_in + usage.completion_tokens * provider.pricing_out
+        usage.prompt_tokens * pricing_in + usage.completion_tokens * pricing_out
     ) / guardrails.TOKENS_PER_MILLION
 
 

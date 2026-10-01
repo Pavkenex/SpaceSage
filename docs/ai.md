@@ -45,11 +45,16 @@ anything else.
 `charm` points at Charm Hyper (`charm.land`), an OpenAI-compatible gateway with
 one subscription over a whole model catalog — DeepSeek, GLM, Qwen, Kimi, MiniMax
 and more. The key is read from `HYPER_API_KEY` (`sk-hyper-…`). Pick a
-`/chat/completions` model; `deepseek-v4.1-flash` is the preset default. The
-preset carries that model's published prices ($0.30 / $1.20 per 1M tokens in and
-out) so the cost meter works out of the box — update `pricing_in` / `pricing_out`
-when you switch to a differently priced model. No extra headers are needed (the
-`x-opencode-session` header is only ever sent to `opencode.ai`).
+`/chat/completions` model; `deepseek-v4.1-flash` is the preset default. No extra
+headers are needed (the `x-opencode-session` header is only ever sent to
+`opencode.ai`).
+
+Hyper is also one of the gateways that publishes each model's own limits and
+prices in `/models` — `max_output_tokens`, `context_window` and a `pricing`
+block — and SpaceSage reads them (see *Bounds* and *Prices* below). The preset
+still carries `deepseek-v4.1-flash`'s numbers ($0.33 / $1.31 per 1M tokens) as a
+fallback that works offline; an explicit `pricing_in` / `pricing_out` always
+wins over the published ones.
 
 ### OpenCode Zen
 
@@ -196,22 +201,29 @@ call's cost cannot be computed, the meter reports *cost unknown* instead of a
 total.
 
 **Prices** are per provider, in USD per 1M tokens: `pricing_in` (prompt),
-`pricing_out` (completion). Without them cost shows as `unknown`, never a wrong
-number (`openai` carries its own; `openrouter`'s and `opencode`'s depend on the
-model you route to).
+`pricing_out` (completion).  An explicit price always wins; when one is not set,
+the price the provider publishes for the chosen model in `/models` is used
+(Charm Hyper publishes one).  With neither, cost shows as `unknown`, never a
+wrong number (`openai` carries its own in its preset; `openrouter`'s and
+`opencode`'s depend on the model you route to).
 
 **Bounds.** `batch_size` (items per request, default 8, range 1–64),
 `max_prompt_chars` (a request's data block, default 24 000 — a batch splits
-further when items are chatty), `max_items` (items per run, default 200 — the
-rest are reported as not filled, never silently dropped), and the completion
-ceiling, which is per use case (4096 tokens; `summarize`: 3072).  A ceiling is
-not an allocation — it only binds when a model would otherwise be cut off
-mid-answer, which is exactly what models that reason before answering need: the
-reasoning pass comes out of the same budget, and too small a ceiling makes a
-batch come back empty (`truncated`).  When that happens the call is retried once
-at 16 384 tokens, so a heavy reasoning pass costs a second call instead of the
-answer.  The estimate's completion allowance is a typical answer; a reasoning
-model's real usage can be several times it.
+further when items are chatty) and `max_items` (items per run, default 200 — the
+rest are reported as not filled, never silently dropped).  The completion
+ceiling comes from the provider: when `/models` publishes the model's own
+`max_output_tokens` (Charm Hyper does), that is the ceiling, so a provider that
+would reject an over-large `max_tokens` never sees one.  Providers that send the
+bare OpenAI shape — OpenCode Zen and OpenAI itself — get a 16 384-token default
+instead.  Either way it is capped at 32 768.
+
+A ceiling is not an allocation: it only binds when a model would otherwise be
+cut off mid-answer, which is exactly what models that reason before answering
+need — the reasoning pass comes out of the same budget, and too small a ceiling
+makes a batch come back empty (`truncated`).  When that happens the call is
+retried once at the cap, so a heavy reasoning pass costs a second call instead
+of the answer.  The estimate's completion allowance is a typical answer; a
+reasoning model's real usage can be several times it.
 
 ## How a suggestion is produced
 

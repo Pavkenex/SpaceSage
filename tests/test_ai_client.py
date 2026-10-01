@@ -17,7 +17,7 @@ import pytest
 
 from ai_stub import StubReply, StubServer
 from spacesage.ai import AIClient, AIError, Message, ProviderConfig
-from spacesage.ai.client import http_opener, is_opencode_endpoint
+from spacesage.ai.client import http_opener, is_opencode_endpoint, parse_models
 
 
 def provider_for(server: StubServer, **overrides: object) -> ProviderConfig:
@@ -48,6 +48,54 @@ def test_models_are_listed(ai_stub: StubServer) -> None:
 
     assert [info.id for info in models] == ["stub-embed", "stub-model", "stub-model-mini"]
     assert len(ai_stub.model_requests) == 1
+
+
+def test_a_listing_carries_limits_and_prices_when_the_provider_publishes_them() -> None:
+    """Charm Hyper sends ``max_output_tokens`` and a ``pricing`` block; OpenAI sends neither."""
+    listing = json.dumps(
+        {
+            "data": [
+                {
+                    "id": "deepseek-v4.1-flash",
+                    "object": "model",
+                    "owned_by": "hyper",
+                    "context_window": 1_048_576,
+                    "max_output_tokens": 262_144,
+                    "pricing": {"input": 0.33, "output": 1.31, "cache_hit": 0.03},
+                },
+                {"id": "bare", "object": "model", "owned_by": "opencode"},
+            ]
+        }
+    )
+
+    by_id = {info.id: info for info in parse_models(listing)}
+
+    rich = by_id["deepseek-v4.1-flash"]
+    assert rich.max_output_tokens == 262_144
+    assert rich.context_window == 1_048_576
+    assert rich.pricing_in == 0.33
+    assert rich.pricing_out == 1.31
+    bare = by_id["bare"]
+    assert bare.max_output_tokens is None, "no limit is invented for a bare listing"
+    assert bare.pricing_in is None
+
+
+def test_a_listing_reads_the_other_vendors_field_names() -> None:
+    """vLLM says ``max_model_len``, LM Studio ``max_context_length``: read those too."""
+    listing = json.dumps(
+        {
+            "data": [
+                {"id": "vllm", "max_model_len": 8192},
+                {"id": "lmstudio", "max_context_length": 4096, "max_completion_tokens": 2048},
+            ]
+        }
+    )
+
+    by_id = {info.id: info for info in parse_models(listing)}
+
+    assert by_id["vllm"].context_window == 8192
+    assert by_id["lmstudio"].context_window == 4096
+    assert by_id["lmstudio"].max_output_tokens == 2048
 
 
 def test_chat_sends_the_messages_and_parses_the_answer(ai_stub: StubServer) -> None:

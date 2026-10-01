@@ -151,12 +151,13 @@ PRESETS: Mapping[str, ProviderPreset] = {
         api_key_env="HYPER_API_KEY",
         model="deepseek-v4.1-flash",
         local=False,
-        pricing_in=0.30,
-        pricing_out=1.20,
+        pricing_in=0.33,
+        pricing_out=1.31,
         note=(
             "Cloud gateway (charm.land): the items you suggest for leave this machine. "
-            "One subscription covers the whole catalog; the prices here are the preset "
-            "model's (deepseek-v4.1-flash) - update them if you switch models."
+            "One subscription covers the whole catalog. Hyper publishes each model's own "
+            "price in /models, which SpaceSage reads when these are left unset; the "
+            "numbers here are deepseek-v4.1-flash's, as a fallback that works offline."
         ),
     ),
     "custom": ProviderPreset(

@@ -10,6 +10,25 @@ not understand.
 
 ## [Unreleased]
 
+### Added
+- **The completion ceiling now comes from the model, when the provider publishes
+  it.** `GET /models` is specified as an id list, so OpenAI's own shape (and
+  OpenCode Zen's) carries no limit — but Charm Hyper publishes
+  `max_output_tokens` and `context_window` per model, and vLLM, LM Studio and
+  OpenRouter each use their own field name.  SpaceSage reads whichever the
+  server sends, so the ceiling is the model's own maximum (capped at 32 768)
+  rather than a guess; a provider that sends the bare shape gets a 16 384-token
+  default, and a truncated call still retries at the cap.
+- **Prices are read from the provider too.** When `pricing_in` / `pricing_out`
+  are not set in `ai.toml`, the price the gateway publishes for the chosen model
+  is used — Charm Hyper publishes one, so switching models in the catalog no
+  longer leaves the cost meter guessing.  An explicit price always wins.
+
+### Changed
+- The `charm` preset's prices are now Hyper's published ones for
+  `deepseek-v4.1-flash` ($0.33 / $1.31 per 1M, not $0.30 / $1.20), and they are
+  a fallback rather than the only source.
+
 ## [0.1.11] - 2026-10-01
 
 ### Fixed

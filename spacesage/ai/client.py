@@ -99,15 +99,38 @@ class Usage:
 
 @dataclass(frozen=True)
 class ModelInfo:
-    """One entry of ``GET /models``."""
+    """One entry of ``GET /models``.
+
+    The OpenAI shape is only ``id``/``object``/``created``/``owned_by``; limits
+    and prices are provider extensions -- Charm Hyper publishes
+    ``max_output_tokens`` and a ``pricing`` block, vLLM a ``max_model_len``,
+    OpenRouter a ``context_length``.  They are read when the provider sends them
+    and left ``None`` when it does not, so nothing here assumes a vendor.
+    """
 
     id: str
     owned_by: str | None = None
     created: int | None = None
+    max_output_tokens: int | None = None
+    """The most the model will write in one completion, when it says so."""
+    context_window: int | None = None
+    """The model's whole context (prompt + completion), when it says so."""
+    pricing_in: float | None = None
+    """USD per 1M prompt tokens, when the provider publishes prices."""
+    pricing_out: float | None = None
+    """USD per 1M completion tokens, when the provider publishes prices."""
 
     def to_dict(self) -> dict[str, object]:
         """JSON-ready view."""
-        return {"id": self.id, "owned_by": self.owned_by, "created": self.created}
+        return {
+            "id": self.id,
+            "owned_by": self.owned_by,
+            "created": self.created,
+            "max_output_tokens": self.max_output_tokens,
+            "context_window": self.context_window,
+            "pricing_in": self.pricing_in,
+            "pricing_out": self.pricing_out,
+        }
 
 
 @dataclass(frozen=True)
@@ -708,13 +731,28 @@ def parse_models(text: str) -> tuple[ModelInfo, ...]:
         if isinstance(entry, Mapping):
             identifier = entry.get("id") or entry.get("name") or entry.get("model")
             if isinstance(identifier, str) and identifier:
-                created = entry.get("created")
+                pricing = entry.get("pricing")
                 models.append(
                     ModelInfo(
                         id=identifier,
                         owned_by=_optional_str(entry.get("owned_by"))
                         or _optional_str(entry.get("publisher")),
-                        created=int(created) if isinstance(created, int) else None,
+                        created=_optional_int(entry.get("created")),
+                        max_output_tokens=_first_int(
+                            entry,
+                            "max_output_tokens",
+                            "max_completion_tokens",
+                            "max_tokens",
+                        ),
+                        context_window=_first_int(
+                            entry,
+                            "context_window",
+                            "context_length",
+                            "max_context_length",
+                            "max_model_len",
+                        ),
+                        pricing_in=_first_price(entry, pricing, "input", "pricing_in"),
+                        pricing_out=_first_price(entry, pricing, "output", "pricing_out"),
                     )
                 )
         elif isinstance(entry, str) and entry:
@@ -853,6 +891,52 @@ def _as_int(value: Any) -> int:
 
 def _optional_str(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _optional_int(value: Any) -> int | None:
+    """An integer from a provider's field (``None`` for bools, junk and blanks)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text.lstrip("-").isdigit():
+            return int(text)
+    return None
+
+
+def _optional_float(value: Any) -> float | None:
+    """A number from a provider's field (``None`` for bools and non-numbers).
+
+    Strings are deliberately *not* parsed: OpenRouter publishes prices as
+    per-token decimal strings, which are not the per-1M numbers metering wants.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _first_int(entry: Mapping[str, Any], *keys: str) -> int | None:
+    """The first of ``keys`` the entry carries as a positive integer."""
+    for key in keys:
+        number = _optional_int(entry.get(key))
+        if number is not None and number > 0:
+            return number
+    return None
+
+
+def _first_price(entry: Mapping[str, Any], pricing: Any, field: str, flat_key: str) -> float | None:
+    """A per-1M price: the ``pricing`` block's field first, then a flat key."""
+    if isinstance(pricing, Mapping):
+        price = _optional_float(pricing.get(field))
+        if price is not None:
+            return price
+    return _optional_float(entry.get(flat_key))
 
 
 def _error_text(exc: urllib.error.HTTPError) -> str:
