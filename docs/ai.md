@@ -208,9 +208,10 @@ ceiling, which is per use case (4096 tokens; `summarize`: 3072).  A ceiling is
 not an allocation — it only binds when a model would otherwise be cut off
 mid-answer, which is exactly what models that reason before answering need: the
 reasoning pass comes out of the same budget, and too small a ceiling makes a
-batch fail with `truncated` and nothing in it.  The estimate's completion
-allowance is a typical answer; a reasoning model's real usage can be several
-times it.
+batch come back empty (`truncated`).  When that happens the call is retried once
+at 16 384 tokens, so a heavy reasoning pass costs a second call instead of the
+answer.  The estimate's completion allowance is a typical answer; a reasoning
+model's real usage can be several times it.
 
 ## How a suggestion is produced
 

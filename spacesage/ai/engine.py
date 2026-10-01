@@ -39,7 +39,7 @@ from spacesage.ai.client import (
     http_opener,
 )
 from spacesage.ai.config import AIConfig, ProviderConfig
-from spacesage.ai.errors import DISABLED, AIError
+from spacesage.ai.errors import DISABLED, TRUNCATED, AIError
 from spacesage.ai.prompts import Classification, ItemFacts, Suggestion
 from spacesage.ai.results import (
     AIStatus,
@@ -61,6 +61,17 @@ DEFAULT_BATCH_SIZE = 8
 
 DEFAULT_MAX_ITEMS = 200
 """Items a single batch run covers (the rest are reported as not filled)."""
+
+TRUNCATION_RETRY_TOKENS = 16_384
+"""The ceiling a call retries at when the model spent its whole budget reasoning.
+
+A reasoning model (``deepseek-v4.1-flash`` and its kin) writes its thinking
+before its answer, so a per-use-case ceiling can bind before a single token of
+the answer exists and the call comes back empty (``truncated``).  Rather than
+fail, the call is retried once at this ceiling: a ceiling is not an allocation,
+so room the model does not use costs nothing, and only a call that truncated
+pays for the retry.
+"""
 
 
 @dataclass(frozen=True)
@@ -405,20 +416,12 @@ class AIEngine:
         client = self.client()
         messages = prompts.build_messages(prepared.case_id, prepared.payload)
         started = time.monotonic()
-        if stream and on_delta is not None:
-            result = client.chat_stream(
-                messages,
-                on_delta=on_delta,
-                temperature=case.temperature,
-                max_tokens=case.max_tokens,
-            )
-        else:
-            result = client.chat(messages, temperature=case.temperature, max_tokens=case.max_tokens)
+        result, retries = self._complete(client, messages, case, stream=stream, on_delta=on_delta)
         latency = time.monotonic() - started
         self.meter.record(
             result.usage, pricing_in=provider.pricing_in, pricing_out=provider.pricing_out
         )
-        calls = 1
+        calls = 1 + retries
         answer, errors = guardrails.read_answer(prepared.case_id, result.text)
         if errors:
             repaired = self._repair(
@@ -456,6 +459,73 @@ class AIEngine:
             calls=calls,
             cost_usd=cost,
             redactor=prepared.redactor,
+        )
+
+    def _complete(
+        self,
+        client: AIClient,
+        messages: Sequence[Message],
+        case: prompts.UseCase,
+        *,
+        stream: bool,
+        on_delta: Callable[[str], None] | None,
+    ) -> tuple[ChatResult, int]:
+        """One completion, retried once with more room when the model truncated.
+
+        A reasoning model can spend the whole completion budget thinking and
+        return nothing; the retry hands it a ceiling it can finish inside, and
+        the tokens the failed attempt still burned are metered either way.  The
+        integer is how many extra provider calls the retry took.
+        """
+        try:
+            return self._call(client, messages, case, stream=stream, on_delta=on_delta), 0
+        except AIError as exc:
+            if exc.code != TRUNCATED or case.max_tokens >= TRUNCATION_RETRY_TOKENS:
+                raise
+            self._meter_truncated(exc)
+            return (
+                self._call(
+                    client,
+                    messages,
+                    case,
+                    stream=stream,
+                    on_delta=on_delta,
+                    max_tokens=TRUNCATION_RETRY_TOKENS,
+                ),
+                1,
+            )
+
+    @staticmethod
+    def _call(
+        client: AIClient,
+        messages: Sequence[Message],
+        case: prompts.UseCase,
+        *,
+        stream: bool,
+        on_delta: Callable[[str], None] | None,
+        max_tokens: int | None = None,
+    ) -> ChatResult:
+        """Send one completion at ``max_tokens`` (the use case's ceiling by default)."""
+        ceiling = case.max_tokens if max_tokens is None else max_tokens
+        if stream and on_delta is not None:
+            return client.chat_stream(
+                messages,
+                on_delta=on_delta,
+                temperature=case.temperature,
+                max_tokens=ceiling,
+            )
+        return client.chat(messages, temperature=case.temperature, max_tokens=ceiling)
+
+    def _meter_truncated(self, exc: AIError) -> None:
+        """Record the tokens a truncated attempt spent (when its body carried them)."""
+        usage = exc.detail.get("usage")
+        if not isinstance(usage, Mapping):
+            return
+        provider = self.provider()
+        self.meter.record(
+            _usage_from_mapping(usage),
+            pricing_in=provider.pricing_in,
+            pricing_out=provider.pricing_out,
         )
 
     def _repair(

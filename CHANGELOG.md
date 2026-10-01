@@ -10,6 +10,17 @@ not understand.
 
 ## [Unreleased]
 
+### Fixed
+- **A reasoning model that spent its whole completion budget thinking no longer
+  fails the call.** `deepseek-v4.1-flash` and its kin write their reasoning out
+  of the same `max_tokens` budget as the answer, so a per-use-case ceiling
+  (4096) can bind before a single token of the answer exists and the call comes
+  back empty with `truncated` — which is what "Generate AI suggestions" was
+  showing.  The call is now retried once at 16 384 tokens: a ceiling is not an
+  allocation, so the extra room costs nothing unless the model uses it, and only
+  a call that truncated pays for the retry.  The tokens the failed attempt still
+  spent are metered.
+
 ## [0.1.10] - 2026-10-01
 
 ### Changed

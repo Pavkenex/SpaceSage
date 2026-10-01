@@ -24,7 +24,9 @@ from ai_stub import (
 )
 from ai_support import fact
 from spacesage.ai import AIConfig, AIEngine, AIError, ProviderConfig
+from spacesage.ai.engine import TRUNCATION_RETRY_TOKENS
 from spacesage.ai.guardrails import assert_redacted
+from spacesage.ai.prompts import use_case
 
 INSTALLERS = "C:\\Users\\matija\\Downloads"
 SETUP = INSTALLERS + "\\setup-old.msi"
@@ -87,6 +89,54 @@ def test_suggestions_are_parsed_and_attributed_to_their_items(
     assert outcome.calls == 1
     assert outcome.usage.prompt_tokens > 0
     assert ai_stub.calls == 1
+
+
+def truncated_reply() -> StubReply:
+    """A 200 whose model spent the whole budget reasoning and answered nothing."""
+    return StubReply(
+        raw=json.dumps(
+            {
+                "id": "chatcmpl-stub",
+                "object": "chat.completion",
+                "model": "stub-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "length",
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "reasoning_content": "let me think about this batch...",
+                        },
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 900,
+                    "completion_tokens": 4096,
+                    "total_tokens": 4996,
+                },
+            }
+        )
+    )
+
+
+def test_a_reasoning_model_that_truncated_is_retried_with_more_room(
+    ai_stub: StubServer, ai_engine: AIEngine
+) -> None:
+    """A model that spent its whole ceiling thinking is asked again with a bigger one."""
+    ai_stub.push(truncated_reply())
+    ai_stub.queue_json(suggestion_answer(item(SETUP)))
+
+    outcome = ai_engine.suggest([fact(SETUP)])
+
+    assert outcome.ok is True
+    assert [suggestion.action for suggestion in outcome.suggestions] == ["DELETE_QUARANTINE"]
+    assert outcome.calls == 2, "the truncated attempt and the retry"
+    assert ai_stub.calls == 2
+    first, second = ai_stub.chat_requests
+    assert first.body is not None and second.body is not None
+    assert first.body["max_tokens"] == use_case("suggest").max_tokens
+    assert second.body["max_tokens"] == TRUNCATION_RETRY_TOKENS
 
 
 def test_no_action_is_a_first_class_answer(ai_stub: StubServer, ai_engine: AIEngine) -> None:
