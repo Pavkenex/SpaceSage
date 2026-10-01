@@ -31,6 +31,8 @@ DATA_DIR = Path(__file__).resolve().parent / "fixtures" / "data"
 
 #: Reference point of the fixture and the tests (2026-09-12 12:00:00 UTC).
 NOW = int(datetime(2026, 9, 12, 12, 0, 0, tzinfo=UTC).timestamp())
+#: The same instant as the CLI's ``--now`` takes it (ISO 8601).
+NOW_ISO = datetime(2026, 9, 12, 12, 0, 0, tzinfo=UTC).isoformat()
 DAY = 86_400
 MIB = 1024**2
 
@@ -137,6 +139,16 @@ def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         check=False,
     )
+
+
+def candidates_cli_args(db_path: Path, *extra: str) -> list[str]:
+    """``candidates`` CLI arguments, pinned to the fixture's reference time.
+
+    ``--now`` keeps the command line on the fixture's own clock: a candidate's
+    age (and the recency factor inside its score) is only stable against it, so
+    the ranked order drifts with the calendar without the pin.
+    """
+    return ["candidates", "--db", str(db_path), "--now", NOW_ISO, *extra]
 
 
 # --------------------------------------------------------------------------- #
@@ -784,7 +796,7 @@ def test_candidate_fixture_is_reproducible(tmp_path: Path, monkeypatch: pytest.M
 
 def test_cli_prints_the_ranked_lists(tmp_path: Path) -> None:
     db_path = ingest_fixture(tmp_path)
-    result = run_cli("candidates", "--db", str(db_path), "--min-size", "100M", "--top", "3")
+    result = run_cli(*candidates_cli_args(db_path, "--min-size", "100M", "--top", "3"))
     assert result.returncode == 0
     assert "candidates:" in result.stdout
     for kind in candidates.KINDS:
@@ -794,8 +806,13 @@ def test_cli_prints_the_ranked_lists(tmp_path: Path) -> None:
 
 
 def test_cli_json_matches_the_engine(tmp_path: Path) -> None:
+    """The command line and the library agree on the fixture's reference time.
+
+    Candidate ages feed the recency factor inside every score, so both sides run
+    on the pinned clock (``--now``).
+    """
     db_path = ingest_fixture(tmp_path)
-    result = run_cli("candidates", "--db", str(db_path), "--min-size", "100M", "--json")
+    result = run_cli(*candidates_cli_args(db_path, "--min-size", "100M", "--json"))
     assert result.returncode == 0
     data = json.loads(result.stdout)
     assert data["schema"] == "spacesage.candidates/v1"

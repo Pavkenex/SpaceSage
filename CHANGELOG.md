@@ -10,6 +10,17 @@ not understand.
 
 ## [Unreleased]
 
+### Fixed
+- **The candidates CLI test no longer drifts with the calendar.** The suite was
+  red on 2026-10-01, not because anything broke but because
+  `test_cli_json_matches_the_engine` ran the command line on the wall clock
+  while its expected list is pinned to the fixture's reference time
+  (2026-09-12): candidate ages grew, the recency factor inside every score
+  moved, and the ranked order stopped matching — the same class the planner
+  test was already fixed for. Both the ranked-list and the JSON test now run
+  the CLI on the fixture's own clock (`--now`), through a `candidates_cli_args`
+  helper mirroring the planner's.
+
 ## [0.1.8] - 2026-09-23
 
 ### Fixed
