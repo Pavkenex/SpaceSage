@@ -44,9 +44,9 @@ def load_ci_workflow() -> dict[str, object]:
 def test_version_constant() -> None:
     # Pinned to the released version: the release workflow refuses a tag that
     # does not match what the package reports, so this is the CI-side half of
-    # that check (v0.1.8 is the tag of the release whose completion ceilings fit
-    # a model's reasoning pass).  Bump this line with __version__.
-    assert spacesage.__version__ == "0.1.8"
+    # that check (v0.1.9 is the tag of the release that added the Charm Hyper
+    # preset).  Bump this line with __version__.
+    assert spacesage.__version__ == "0.1.9"
 
 
 def test_installed_metadata_matches_version_constant() -> None:

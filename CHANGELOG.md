@@ -10,6 +10,8 @@ not understand.
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-01
+
 ### Added
 - **Charm Hyper is a preset.** `charm` fills in the OpenAI-compatible gateway
   at `https://hyper.charm.land/v1`, the key variable `HYPER_API_KEY`
