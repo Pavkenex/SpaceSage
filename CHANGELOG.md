@@ -10,6 +10,8 @@ not understand.
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-10-01
+
 ### Fixed
 - **A reasoning model that spent its whole completion budget thinking no longer
   fails the call.** `deepseek-v4.1-flash` and its kin write their reasoning out
